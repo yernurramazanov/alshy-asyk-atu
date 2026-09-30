@@ -1,14 +1,14 @@
 import type { ModeId, SkinId } from "./game-progress";
 
 export type Language = "kk" | "ru" | "en";
-export type ThemeChoice = "system" | "light" | "dark";
+export type ThemeChoice = "light" | "dark";
 
 export const languageNames: Record<Language, string> = { kk: "Қазақша", ru: "Русский", en: "English" };
 
 const copy = {
   ru: {
     tagline: "цифровой асық ату", coins: "монет", shop: "Лавка", record: "Рекорд", rules: "Правила", home: "На главную", back: "Назад", modesLabel: "Режимы", loading: "Подготавливаем площадку…", progressUnavailable: "Прогресс временно недоступен.", saveFailed: "Не удалось сохранить результат.", shopFailed: "Не удалось обновить лавку.", purchasesUnavailable: "Покупки пока недоступны.",
-    language: "Язык", theme: "Тема", system: "Системная", light: "Светлая", dark: "Тёмная", arena: "Игровое поле асық ату", arenaRing: "СЫРТҚЫ ШЕҢБЕР",
+    language: "Язык", theme: "Тема", light: "Светлая", dark: "Тёмная", arena: "Игровое поле асық ату", arenaRing: "СЫРТҚЫ ШЕҢБЕР",
     homeEyebrow: "Традиция в твоих руках", homeTitle1: "Прицелься.", homeTitle2: "Почувствуй бросок.", homeLead: "Выбей асыки за границу круга с помощью сақа. Здесь решают угол, сила и точность — не случайность.", startTutorial: "Начать обучение", chooseMode: "Выбрать режим", physics: "Честная физика", masteryStars: "Звёзды за мастерство", goalCoins: "Монеты за новые цели", toVictory: "асыков до победы", lastRound: "Последний раунд", knocked: "выбито", victory: "Победа", tryAgain: "Попробуй ещё", accuracy: "точности",
     path: "Твой путь", modesTitle: "Выбери режим", modesLead: "Начни с техники, затем проверь точность в испытаниях.", starsOf: "из 3 звёзд", locked: "Сначала пройди предыдущий", play: "Играть", starClassic: "3★ — до 3 бросков · 2★ — до 6", starFirst: "3★ — выбей 5 разом · 2★ — 4 разом", starStreak: "3★ — до 3 бросков · 2★ — до 5", starMarksman: "3★ — до 3 бросков · 2★ — до 4",
     collection: "Коллекция сақа", shopLead: "Зарабатывай звёзды в испытаниях. Каждая новая звезда приносит 20 монет; первая победа в обучении — ещё 20.", balance: "Твой баланс", selected: "Выбран", unlocked: "Открыт", using: "Используется", saving: "Сохраняем…", select: "Выбрать", notEnough: "Недостаточно монет", buy: "Купить", shopFootnote: "Монеты выдаются только за новые звёзды. Повторение того же результата не увеличивает баланс.",
@@ -21,7 +21,7 @@ const copy = {
   },
   kk: {
     tagline: "цифрлық асық ату", coins: "теңге", shop: "Дүкен", record: "Рекорд", rules: "Ереже", home: "Басты бет", back: "Артқа", modesLabel: "Режимдер", loading: "Ойын алаңы дайындалуда…", progressUnavailable: "Прогресс уақытша қолжетімсіз.", saveFailed: "Нәтиже сақталмады.", shopFailed: "Дүкен жаңартылмады.", purchasesUnavailable: "Сатып алу әзірге қолжетімсіз.",
-    language: "Тіл", theme: "Тақырып", system: "Жүйелік", light: "Ашық", dark: "Қараңғы", arena: "Асық ату ойын алаңы", arenaRing: "СЫРТҚЫ ШЕҢБЕР",
+    language: "Тіл", theme: "Тақырып", light: "Ашық", dark: "Қараңғы", arena: "Асық ату ойын алаңы", arenaRing: "СЫРТҚЫ ШЕҢБЕР",
     homeEyebrow: "Дәстүр сенің қолыңда", homeTitle1: "Көзде.", homeTitle2: "Лақтыруды сезін.", homeLead: "Сақамен асықтарды шеңбер сыртына шығар. Мұнда бұрыш, күш пен дәлдік шешеді — кездейсоқтық емес.", startTutorial: "Үйренуді бастау", chooseMode: "Режимді таңдау", physics: "Шынайы физика", masteryStars: "Шеберлікке жұлдыз", goalCoins: "Жаңа мақсатқа теңге", toVictory: "асық жеңіске дейін", lastRound: "Соңғы раунд", knocked: "шығарылды", victory: "Жеңіс", tryAgain: "Қайта байқап көр", accuracy: "дәлдік",
     path: "Сенің жолың", modesTitle: "Режимді таңда", modesLead: "Алдымен әдісті меңгер, сосын сынақтарда дәлдігіңді тексер.", starsOf: "3 жұлдыздан", locked: "Алдыңғы сынақтан өт", play: "Ойнау", starClassic: "3★ — 3 лақтыруға дейін · 2★ — 6-ға дейін", starFirst: "3★ — бірден 5 асық · 2★ — бірден 4", starStreak: "3★ — 3 лақтыруға дейін · 2★ — 5-ке дейін", starMarksman: "3★ — 3 лақтыруға дейін · 2★ — 4-ке дейін",
     collection: "Сақа топтамасы", shopLead: "Сынақтарда жұлдыз жина. Әр жаңа жұлдыз 20 теңге береді; үйренудегі алғашқы жеңіс тағы 20 теңге береді.", balance: "Балансың", selected: "Таңдалған", unlocked: "Ашылған", using: "Қолданыста", saving: "Сақталуда…", select: "Таңдау", notEnough: "Теңге жеткіліксіз", buy: "Сатып алу", shopFootnote: "Теңге тек жаңа жұлдыз үшін беріледі. Бір нәтижені қайталау балансты көбейтпейді.",
@@ -34,7 +34,7 @@ const copy = {
   },
   en: {
     tagline: "digital asyk atu", coins: "coins", shop: "Shop", record: "Best", rules: "Rules", home: "Home", back: "Back", modesLabel: "Modes", loading: "Preparing the arena…", progressUnavailable: "Progress is temporarily unavailable.", saveFailed: "Could not save the result.", shopFailed: "Could not update the shop.", purchasesUnavailable: "Purchases are temporarily unavailable.",
-    language: "Language", theme: "Theme", system: "System", light: "Light", dark: "Dark", arena: "Asyk atu game arena", arenaRing: "OUTER RING",
+    language: "Language", theme: "Theme", light: "Light", dark: "Dark", arena: "Asyk atu game arena", arenaRing: "OUTER RING",
     homeEyebrow: "Tradition in your hands", homeTitle1: "Take aim.", homeTitle2: "Feel the throw.", homeLead: "Use your saka (striker) to knock the asyks (target pieces) beyond the circle. Angle, power and precision decide the outcome — not chance.", startTutorial: "Start tutorial", chooseMode: "Choose mode", physics: "Real physics", masteryStars: "Stars for skill", goalCoins: "Coins for new goals", toVictory: "asyks to win", lastRound: "Last round", knocked: "knocked out", victory: "Victory", tryAgain: "Try again", accuracy: "accuracy",
     path: "Your path", modesTitle: "Choose a mode", modesLead: "Learn the technique, then test your precision in challenges.", starsOf: "of 3 stars", locked: "Complete the previous challenge", play: "Play", starClassic: "3★ — within 3 throws · 2★ — within 6", starFirst: "3★ — knock out 5 at once · 2★ — 4 at once", starStreak: "3★ — within 3 throws · 2★ — within 5", starMarksman: "3★ — within 3 throws · 2★ — within 4",
     collection: "Saka collection", shopLead: "Earn stars in challenges. Each new star grants 20 coins; your first tutorial win grants another 20.", balance: "Your balance", selected: "Selected", unlocked: "Unlocked", using: "Equipped", saving: "Saving…", select: "Equip", notEnough: "Not enough coins", buy: "Buy", shopFootnote: "Coins are awarded only for new stars. Repeating the same result will not increase your balance.",

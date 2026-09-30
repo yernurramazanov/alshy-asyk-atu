@@ -405,9 +405,7 @@ function GameCanvas({
 
 export default function GameApp() {
   const [language, setLanguage] = useState<Language>("ru");
-  const [themeChoice, setThemeChoice] = useState<ThemeChoice>("system");
-  const [systemDark, setSystemDark] = useState(true);
-  const theme = themeChoice === "system" ? (systemDark ? "dark" : "light") : themeChoice;
+  const [theme, setTheme] = useState<ThemeChoice>("light");
   const t = translation(language);
   const [screen, setScreen] = useState<Screen>("home");
   const [mode, setMode] = useState<ModeConfig>(MODES[1]);
@@ -426,17 +424,15 @@ export default function GameApp() {
     const savedLanguage = window.localStorage.getItem("alshy.language");
     setLanguage(savedLanguage === "kk" || savedLanguage === "ru" || savedLanguage === "en" ? savedLanguage : languageFromBrowser(navigator.language));
     const savedTheme = window.localStorage.getItem("alshy.theme");
-    setThemeChoice(savedTheme === "light" || savedTheme === "dark" ? savedTheme : "system");
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () => setSystemDark(media.matches);
-    update(); media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
+    const nextTheme = savedTheme === "dark" || (savedTheme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+    window.localStorage.setItem("alshy.theme", nextTheme);
+    setTheme(nextTheme);
   }, []);
 
   useEffect(() => { document.documentElement.lang = language; }, [language]);
   useEffect(() => { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; }, [theme]);
   const chooseLanguage = (next: Language) => { window.localStorage.setItem("alshy.language", next); setLanguage(next); };
-  const chooseTheme = (next: ThemeChoice) => { window.localStorage.setItem("alshy.theme", next); setThemeChoice(next); };
+  const chooseTheme = (next: ThemeChoice) => { window.localStorage.setItem("alshy.theme", next); setTheme(next); };
 
   useEffect(() => {
     let active = true;
@@ -504,7 +500,7 @@ export default function GameApp() {
           {screen !== "play" && <Button variant="ghost" className="topbar-shop" aria-label={t.shop} onClick={() => setScreen("shop")}><ShoppingBag /><span className="shop-label">{t.shop}</span></Button>}
           <span><Trophy /> {t.record} <strong>{progress.bestScore}</strong></span>
           <div className="preference-control"><label htmlFor="language-select">{t.language}</label><select id="language-select" value={language} onChange={(event) => chooseLanguage(event.target.value as Language)}>{(["kk", "ru", "en"] as const).map((value) => <option key={value} value={value}>{languageNames[value]}</option>)}</select></div>
-          <div className="preference-control"><label htmlFor="theme-select">{t.theme}</label><select id="theme-select" value={themeChoice} onChange={(event) => chooseTheme(event.target.value as ThemeChoice)}><option value="system">{t.system}</option><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select></div>
+          <div className="preference-control"><label htmlFor="theme-select">{t.theme}</label><select id="theme-select" value={theme} onChange={(event) => chooseTheme(event.target.value as ThemeChoice)}><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select></div>
           <Button variant="ghost" size="icon" className="icon-button" aria-label={t.rules} onClick={() => setScreen("rules")}><CircleHelp /></Button>
         </div>
       </header>
