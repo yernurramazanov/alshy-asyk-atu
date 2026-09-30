@@ -16,27 +16,22 @@ import {
   Star,
   Target,
   Trophy,
-  Volume2,
-  VolumeX,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { DEFAULT_PROGRESS, normalizeProgress, SKINS, starsForRound, type ModeId, type PlayerProgress, type RoundResult, type SkinConfig, type SkinId } from "@/lib/game-progress";
+import { languageFromBrowser, languageNames, translation, type Language, type ThemeChoice } from "@/lib/i18n";
 
 type Screen = "home" | "modes" | "play" | "rules" | "shop";
 type Phase = "aiming" | "charging" | "simulating" | "resolving" | "completed";
 
 interface ModeConfig {
   id: ModeId;
-  eyebrow: string;
-  title: string;
-  description: string;
   targetScore: number;
   maxThrows: number;
   requiredStreak?: number;
   layout: "line" | "cluster" | "split";
-  difficulty: string;
 }
 
 interface HudState {
@@ -53,19 +48,12 @@ interface HudState {
 const STORAGE_KEY = "alshy.progress.v1";
 
 const MODES: ModeConfig[] = [
-  { id: "tutorial", eyebrow: "4 шага", title: "Обучение", description: "Освой прицел, силу и первый точный бросок.", targetScore: 1, maxThrows: 4, layout: "cluster", difficulty: "Начало" },
-  { id: "classic", eyebrow: "Основной режим", title: "Классический раунд", description: "Выбей 8 из 15 асыков за 10 бросков.", targetScore: 8, maxThrows: 10, layout: "line", difficulty: "Стандарт" },
-  { id: "first-hit", eyebrow: "Испытание 1", title: "Мощный удар", description: "Выбей 3 асыка одним броском. У тебя 4 попытки.", targetScore: 3, maxThrows: 4, layout: "cluster", difficulty: "Меткость" },
-  { id: "streak", eyebrow: "Испытание 2", title: "Серия", description: "Сделай два результативных броска подряд.", targetScore: 2, maxThrows: 7, requiredStreak: 2, layout: "split", difficulty: "Средне" },
-  { id: "marksman", eyebrow: "Испытание 3", title: "Нағыз мерген", description: "Выбей 8 асыков за 6 бросков.", targetScore: 8, maxThrows: 6, layout: "line", difficulty: "Сложно" },
+  { id: "tutorial", targetScore: 1, maxThrows: 4, layout: "cluster" },
+  { id: "classic", targetScore: 8, maxThrows: 10, layout: "line" },
+  { id: "first-hit", targetScore: 3, maxThrows: 4, layout: "cluster" },
+  { id: "streak", targetScore: 2, maxThrows: 7, requiredStreak: 2, layout: "split" },
+  { id: "marksman", targetScore: 8, maxThrows: 6, layout: "line" },
 ];
-
-const STAR_HINTS: Partial<Record<ModeId, string>> = {
-  classic: "3★ — до 3 бросков · 2★ — до 6",
-  "first-hit": "3★ — выбей 5 разом · 2★ — 4 разом",
-  streak: "3★ — до 3 бросков · 2★ — до 5",
-  marksman: "3★ — до 3 бросков · 2★ — до 4",
-};
 
 function loadLegacyProgress(): PlayerProgress | null {
   if (typeof window === "undefined") return null;
@@ -88,11 +76,12 @@ function modeById(id: ModeId) {
   return MODES.find((item) => item.id === id) ?? MODES[1];
 }
 
-function advice(result: RoundResult) {
-  if (result.won && result.accuracy >= 70) return "Точный раунд. Пора переходить к следующему испытанию.";
-  if (result.bestShot >= 3) return "Сильный бросок. Повтори угол и немного уменьши разброс силы.";
-  if (result.accuracy < 35) return "Сначала выровняй направление, затем добавляй силу.";
-  return result.won ? "Хороший темп. Теперь попробуй победить меньшим числом бросков." : "Целься в край центральной группы — импульс пройдёт через несколько асыков.";
+function advice(result: RoundResult, language: Language) {
+  const t = translation(language);
+  if (result.won && result.accuracy >= 70) return t.advicePerfect;
+  if (result.bestShot >= 3) return t.advicePower;
+  if (result.accuracy < 35) return t.adviceAim;
+  return result.won ? t.adviceWin : t.adviceLose;
 }
 
 function LogoMark() {
@@ -106,6 +95,8 @@ function GameCanvas({
   onHud,
   onComplete,
   onTutorialStep,
+  language,
+  theme,
 }: {
   mode: ModeConfig;
   skin: SkinConfig;
@@ -113,9 +104,13 @@ function GameCanvas({
   onHud: (hud: HudState) => void;
   onComplete: (result: RoundResult) => void;
   onTutorialStep: (step: number) => void;
+  language: Language;
+  theme: "light" | "dark";
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<any>(null);
+  const appearanceRef = useRef({ language, theme });
+  appearanceRef.current = { language, theme };
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +142,8 @@ function GameCanvas({
         private shotKnocked = 0;
         private activeKnocked: Array<any & { scored?: boolean }> = [];
         private tutorialStep = 0;
+        private arenaGraphics: any;
+        private arenaLabel: any;
 
         constructor() { super("asyk-scene"); }
 
@@ -160,10 +157,12 @@ function GameCanvas({
           this.drawAim();
           this.emitHud(0);
           this.emitTutorial(0);
+          this.game.events.on("appearance", this.drawArena, this);
         }
 
         shutdown() {
           this.input.removeAllListeners();
+          this.game.events.off("appearance", this.drawArena, this);
         }
 
         private createTextures() {
@@ -185,19 +184,23 @@ function GameCanvas({
         }
 
         private drawArena() {
-          const g = this.add.graphics();
-          g.fillStyle(0x071822, 1).fillRect(0, 0, 960, 640);
+          const light = appearanceRef.current.theme === "light";
+          const g = this.arenaGraphics ?? (this.arenaGraphics = this.add.graphics().setDepth(-1));
+          g.clear();
+          g.fillStyle(light ? 0xe8e3d5 : 0x071822, 1).fillRect(0, 0, 960, 640);
           g.fillStyle(0x7d241e, 1).fillCircle(arena.x, arena.y, arena.radius + 38);
           g.fillStyle(0xe3b65d, 1).fillCircle(arena.x, arena.y, arena.radius + 32);
-          g.fillStyle(0x0c3037, 1).fillCircle(arena.x, arena.y, arena.radius + 26);
+          g.fillStyle(light ? 0x25515a : 0x0c3037, 1).fillCircle(arena.x, arena.y, arena.radius + 26);
           g.fillStyle(0xc98b47, 1).fillCircle(arena.x, arena.y, arena.radius);
           g.lineStyle(6, 0xf6ddaa, 0.98).strokeCircle(arena.x, arena.y, arena.radius);
           g.lineStyle(2, 0x9b2c23, 0.9).strokeCircle(arena.x, arena.y, arena.radius - 9);
           g.lineStyle(2, 0x744624, 0.6).lineBetween(arena.x - 182, arena.y, arena.x + 182, arena.y);
           g.lineStyle(2, 0x25d9c7, 0.55).lineBetween(308, 548, 652, 548);
-          g.fillStyle(0x132f36, 0.7);
+          g.fillStyle(light ? 0x8a7e6e : 0x132f36, light ? 0.26 : 0.7);
           for (let i = 0; i < 34; i += 1) g.fillCircle((i * 83 + 29) % 930, (i * 47 + 61) % 620, i % 3 === 0 ? 2 : 1);
-          this.add.text(480, 36, "СЫРТҚЫ ШЕҢБЕР", { fontFamily: "Arial", fontSize: "14px", color: "#f6ddaa", letterSpacing: 4 }).setOrigin(0.5).setAlpha(0.72);
+          const label = translation(appearanceRef.current.language).arenaRing;
+          if (!this.arenaLabel) this.arenaLabel = this.add.text(480, 36, label, { fontFamily: "Arial", fontSize: "14px", color: light ? "#36555a" : "#f6ddaa", letterSpacing: 4 }).setOrigin(0.5);
+          this.arenaLabel.setText(label).setColor(light ? "#36555a" : "#f6ddaa").setAlpha(light ? 0.85 : 0.72);
         }
 
         private positions() {
@@ -384,33 +387,56 @@ function GameCanvas({
       game.events.on("round:completed", onComplete);
       game.events.on("tutorial:step", onTutorialStep);
       gameRef.current = game;
+      game.events.emit("appearance");
     }
 
     void boot();
     return () => { cancelled = true; gameRef.current?.destroy(true); gameRef.current = null; };
   }, [mode, skin, roundKey, onComplete, onHud, onTutorialStep]);
 
+  useEffect(() => { gameRef.current?.events.emit("appearance"); }, [language, theme]);
+
   return (
     <div className="game-stage-wrap">
-      <div ref={hostRef} className="game-stage" aria-label="Игровое поле асық ату" />
+      <div ref={hostRef} className="game-stage" aria-label={translation(language).arena} />
     </div>
   );
 }
 
 export default function GameApp() {
+  const [language, setLanguage] = useState<Language>("ru");
+  const [themeChoice, setThemeChoice] = useState<ThemeChoice>("system");
+  const [systemDark, setSystemDark] = useState(true);
+  const theme = themeChoice === "system" ? (systemDark ? "dark" : "light") : themeChoice;
+  const t = translation(language);
   const [screen, setScreen] = useState<Screen>("home");
   const [mode, setMode] = useState<ModeConfig>(MODES[1]);
   const [progress, setProgress] = useState<PlayerProgress>(DEFAULT_PROGRESS);
   const progressRef = useRef<PlayerProgress>(DEFAULT_PROGRESS);
   const [ready, setReady] = useState(false);
   const [roundKey, setRoundKey] = useState(0);
-  const [muted, setMuted] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const [hud, setHud] = useState<HudState>({ score: 0, bestShot: 0, throwsUsed: 0, maxThrows: 10, targetScore: 8, streak: 0, phase: "aiming", lastKnocked: 0 });
   const [result, setResult] = useState<RoundResult | null>(null);
   const [reward, setReward] = useState<{ earnedCoins: number; earnedStars: number } | null>(null);
   const [progressError, setProgressError] = useState<string | null>(null);
   const [pendingSkin, setPendingSkin] = useState<SkinId | null>(null);
+
+  useEffect(() => {
+    const savedLanguage = window.localStorage.getItem("alshy.language");
+    setLanguage(savedLanguage === "kk" || savedLanguage === "ru" || savedLanguage === "en" ? savedLanguage : languageFromBrowser(navigator.language));
+    const savedTheme = window.localStorage.getItem("alshy.theme");
+    setThemeChoice(savedTheme === "light" || savedTheme === "dark" ? savedTheme : "system");
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemDark(media.matches);
+    update(); media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => { document.documentElement.lang = language; }, [language]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; }, [theme]);
+  const chooseLanguage = (next: Language) => { window.localStorage.setItem("alshy.language", next); setLanguage(next); };
+  const chooseTheme = (next: ThemeChoice) => { window.localStorage.setItem("alshy.theme", next); setThemeChoice(next); };
 
   useEffect(() => {
     let active = true;
@@ -467,48 +493,49 @@ export default function GameApp() {
     return null;
   }, [result]);
 
-  if (!ready) return <main className="app-shell loading-shell">Подготавливаем площадку…</main>;
+  if (!ready) return <main className="app-shell loading-shell">ALSHY</main>;
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="brand" onClick={() => setScreen("home")} type="button" aria-label="На главную"><LogoMark /><span><strong>ALSHY</strong><small>цифровой асық ату</small></span></button>
+        <button className="brand" onClick={() => setScreen("home")} type="button" aria-label={t.home}><LogoMark /><span><strong>ALSHY</strong><small>{t.tagline}</small></span></button>
         <div className="topbar-stats">
-          <span className="wallet-balance"><Coins /> <strong>{progress.coins}</strong> монет</span>
-          {screen !== "play" && <Button variant="ghost" className="topbar-shop" onClick={() => setScreen("shop")}><ShoppingBag /> Лавка</Button>}
-          <span><Trophy /> Рекорд <strong>{progress.bestScore}</strong></span>
-          <Button variant="ghost" size="icon" className="icon-button" aria-label={muted ? "Включить звук" : "Выключить звук"} onClick={() => setMuted((value) => !value)}>{muted ? <VolumeX /> : <Volume2 />}</Button>
-          <Button variant="ghost" size="icon" className="icon-button" aria-label="Правила" onClick={() => setScreen("rules")}><CircleHelp /></Button>
+          <span className="wallet-balance"><Coins /> <strong>{progress.coins}</strong> {t.coins}</span>
+          {screen !== "play" && <Button variant="ghost" className="topbar-shop" aria-label={t.shop} onClick={() => setScreen("shop")}><ShoppingBag /><span className="shop-label">{t.shop}</span></Button>}
+          <span><Trophy /> {t.record} <strong>{progress.bestScore}</strong></span>
+          <div className="preference-control"><label htmlFor="language-select">{t.language}</label><select id="language-select" value={language} onChange={(event) => chooseLanguage(event.target.value as Language)}>{(["kk", "ru", "en"] as const).map((value) => <option key={value} value={value}>{languageNames[value]}</option>)}</select></div>
+          <div className="preference-control"><label htmlFor="theme-select">{t.theme}</label><select id="theme-select" value={themeChoice} onChange={(event) => chooseTheme(event.target.value as ThemeChoice)}><option value="system">{t.system}</option><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select></div>
+          <Button variant="ghost" size="icon" className="icon-button" aria-label={t.rules} onClick={() => setScreen("rules")}><CircleHelp /></Button>
         </div>
       </header>
-      {progressError && <div className="progress-warning" role="status">{progressError} {screen === "shop" && "Покупки пока недоступны."}</div>}
+      {progressError && <div className="progress-warning" role="status">{t.progressUnavailable} {screen === "shop" && t.purchasesUnavailable}</div>}
 
       {screen === "home" && (
         <section className="home-screen">
           <div className="home-copy">
-            <p className="eyebrow">Традиция в твоих руках</p>
-            <h1>Прицелься.<br />Почувствуй бросок.</h1>
-            <p className="home-lead">Выбей асыки за границу круга с помощью сақа. Здесь решают угол, сила и точность — не случайность.</p>
+            <p className="eyebrow">{t.homeEyebrow}</p>
+            <h1>{t.homeTitle1}<br />{t.homeTitle2}</h1>
+            <p className="home-lead">{t.homeLead}</p>
             <div className="home-actions">
-              <Button className="primary-action" size="lg" onClick={() => startMode(modeById("tutorial"))}><BookOpen /> Начать обучение</Button>
-              <Button className="secondary-action" variant="outline" size="lg" onClick={() => setScreen("modes")}>Выбрать режим</Button>
+              <Button className="primary-action" size="lg" onClick={() => startMode(modeById("tutorial"))}><BookOpen /> {t.startTutorial}</Button>
+              <Button className="secondary-action" variant="outline" size="lg" onClick={() => setScreen("modes")}>{t.chooseMode}</Button>
             </div>
-            <div className="quick-facts"><span><Crosshair /> Честная физика</span><span><Star /> Звёзды за мастерство</span><span><Coins /> Монеты за новые цели</span></div>
+            <div className="quick-facts"><span><Crosshair /> {t.physics}</span><span><Star /> {t.masteryStars}</span><span><Coins /> {t.goalCoins}</span></div>
           </div>
-          <div className="home-arena" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="display-saka"><span /></div><div className="target-row">{Array.from({ length: 9 }, (_, index) => <i key={index} style={{ "--i": index } as React.CSSProperties} />)}</div><div className="arena-label"><span>8</span><small>асыков до победы</small></div></div>
-          {progress.results.length > 0 && <aside className="recent-card"><p className="eyebrow"><History /> Последний раунд</p><strong>{progress.results[0].score} выбито</strong><span>{progress.results[0].won ? "Победа" : "Попробуй ещё"} · {progress.results[0].accuracy}% точности</span></aside>}
+          <div className="home-arena" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="display-saka"><span /></div><div className="target-row">{Array.from({ length: 9 }, (_, index) => <i key={index} style={{ "--i": index } as React.CSSProperties} />)}</div><div className="arena-label"><span>8</span><small>{t.toVictory}</small></div></div>
+          {progress.results.length > 0 && <aside className="recent-card"><p className="eyebrow"><History /> {t.lastRound}</p><strong>{progress.results[0].score} {t.knocked}</strong><span>{progress.results[0].won ? t.victory : t.tryAgain} · {progress.results[0].accuracy}% {t.accuracy}</span></aside>}
         </section>
       )}
 
       {screen === "modes" && (
         <section className="modes-screen page-panel">
-          <div className="section-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> Назад</Button><p className="eyebrow">Твой путь</p><h1>Выбери режим</h1><p>Начни с техники, затем проверь точность в испытаниях.</p></div>
+          <div className="section-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> {t.back}</Button><p className="eyebrow">{t.path}</p><h1>{t.modesTitle}</h1><p>{t.modesLead}</p></div>
           <div className="mode-grid">
             {MODES.filter((item) => item.id !== "tutorial").map((item) => {
               const challengeNumber = ["first-hit", "streak", "marksman"].indexOf(item.id);
               const locked = challengeNumber >= 0 && challengeNumber + 1 > progress.unlockedLevel;
               const stars = progress.stars[item.id] ?? 0;
-              return <article className={`mode-card ${locked ? "is-locked" : ""}`} key={item.id}><div className="mode-card-top"><span>{item.eyebrow}</span><small>{item.difficulty}</small></div><div className="mode-symbol">{locked ? <LockKeyhole /> : item.id === "classic" ? <Target /> : <Sparkles />}</div><h2>{item.title}</h2><p>{item.description}</p><div className="star-rating" aria-label={`${stars} из 3 звёзд`}>{[0, 1, 2].map((index) => <Star key={index} className={index < stars ? "earned" : ""} />)}</div><p className="star-hint">{STAR_HINTS[item.id]}</p><Button disabled={locked} onClick={() => startMode(item)}>{locked ? "Сначала пройди предыдущий" : "Играть"}</Button></article>;
+              return <article className={`mode-card ${locked ? "is-locked" : ""}`} key={item.id}><div className="mode-card-top"><span>{t.modes[item.id][0]}</span><small>{t.modes[item.id][3]}</small></div><div className="mode-symbol">{locked ? <LockKeyhole /> : item.id === "classic" ? <Target /> : <Sparkles />}</div><h2>{t.modes[item.id][1]}</h2><p>{t.modes[item.id][2]}</p><div className="star-rating" aria-label={`${stars} ${t.starsOf}`}>{[0, 1, 2].map((index) => <Star key={index} className={index < stars ? "earned" : ""} />)}</div><p className="star-hint">{item.id === "classic" ? t.starClassic : item.id === "first-hit" ? t.starFirst : item.id === "streak" ? t.starStreak : t.starMarksman}</p><Button disabled={locked} onClick={() => startMode(item)}>{locked ? t.locked : t.play}</Button></article>;
             })}
           </div>
         </section>
@@ -516,47 +543,47 @@ export default function GameApp() {
 
       {screen === "shop" && (
         <section className="shop-screen page-panel">
-          <div className="section-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> На главную</Button><p className="eyebrow">Коллекция сақа</p><h1>Лавка</h1><p>Зарабатывай звёзды в испытаниях. Каждая новая звезда приносит 20 монет; первая победа в обучении — ещё 20.</p></div>
-          <div className="shop-balance"><Coins /><span>Твой баланс</span><strong>{progress.coins} монет</strong></div>
+          <div className="section-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> {t.home}</Button><p className="eyebrow">{t.collection}</p><h1>{t.shop}</h1><p>{t.shopLead}</p></div>
+          <div className="shop-balance"><Coins /><span>{t.balance}</span><strong>{progress.coins} {t.coins}</strong></div>
           <div className="shop-grid">{SKINS.map((skin) => {
             const owned = progress.ownedSkins.includes(skin.id);
             const equipped = progress.equippedSkin === skin.id;
             return <article className={`shop-card ${equipped ? "is-equipped" : ""}`} key={skin.id}>
-              <div className="shop-card-top"><span className="skin-swatch" style={{ backgroundColor: `#${skin.tint.toString(16).padStart(6, "0")}` }} /><span>{equipped ? "Выбран" : owned ? "Открыт" : `${skin.price} монет`}</span></div>
-              <h2>{skin.title}</h2><p>{skin.description}</p>
-              <Button disabled={equipped || Boolean(pendingSkin) || Boolean(progressError) || (!owned && progress.coins < skin.price)} onClick={() => handleSkin(skin)}>{equipped ? "Используется" : pendingSkin === skin.id ? "Сохраняем…" : owned ? "Выбрать" : progress.coins < skin.price ? "Недостаточно монет" : "Купить"}</Button>
+              <div className="shop-card-top"><span className="skin-swatch" style={{ backgroundColor: `#${skin.tint.toString(16).padStart(6, "0")}` }} /><span>{equipped ? t.selected : owned ? t.unlocked : `${skin.price} ${t.coins}`}</span></div>
+              <h2>{t.skins[skin.id][0]}</h2><p>{t.skins[skin.id][1]}</p>
+              <Button disabled={equipped || Boolean(pendingSkin) || Boolean(progressError) || (!owned && progress.coins < skin.price)} onClick={() => handleSkin(skin)}>{equipped ? t.using : pendingSkin === skin.id ? t.saving : owned ? t.select : progress.coins < skin.price ? t.notEnough : t.buy}</Button>
             </article>;
           })}</div>
-          <p className="shop-footnote">Монеты выдаются только за новые звёзды. Повторение того же результата не увеличивает баланс.</p>
+          <p className="shop-footnote">{t.shopFootnote}</p>
         </section>
       )}
 
       {screen === "rules" && (
         <section className="rules-screen page-panel">
-          <div className="section-heading rules-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> Назад</Button><p className="eyebrow">Коротко о главном</p><h1>Как играть</h1></div>
+          <div className="section-heading rules-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> {t.back}</Button><p className="eyebrow">{t.rulesEyebrow}</p><h1>{t.rulesTitle}</h1></div>
           <div className="rules-layout">
-            <article className="rule-lead"><span className="rule-number">01</span><h2>Сақа — твой снаряд</h2><p>Зажми бирюзовый сақа, проведи мышью в сторону цели и отпусти.</p></article>
-            <article><span className="rule-number">02</span><h2>Выбивай за круг</h2><p>Асык засчитывается, только когда полностью пересёк светлую границу.</p></article>
-            <article><span className="rule-number">03</span><h2>Считай броски</h2><p>В классическом раунде нужно выбить 8 из 15 асыков за 10 попыток.</p></article>
-            <article><span className="rule-number">04</span><h2>Улучшай точность</h2><p>Результат зависит от угла, силы и точки первого столкновения.</p></article>
+            <article className="rule-lead"><span className="rule-number">01</span><h2>{t.rule1Title}</h2><p>{t.rule1}</p></article>
+            <article><span className="rule-number">02</span><h2>{t.rule2Title}</h2><p>{t.rule2}</p></article>
+            <article><span className="rule-number">03</span><h2>{t.rule3Title}</h2><p>{t.rule3}</p></article>
+            <article><span className="rule-number">04</span><h2>{t.rule4Title}</h2><p>{t.rule4}</p></article>
           </div>
-          <Button className="primary-action rules-start" onClick={() => startMode(modeById("tutorial"))}><BookOpen /> Попробовать в обучении</Button>
+          <Button className="primary-action rules-start" onClick={() => startMode(modeById("tutorial"))}><BookOpen /> {t.tryTutorial}</Button>
         </section>
       )}
 
       {screen === "play" && (
         <section className="play-screen">
-          <div className="play-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("modes")}><ArrowLeft /> Режимы</Button><div><span>{mode.eyebrow}</span><strong>{mode.title}</strong></div><div className="phase-pill">{hud.phase === "simulating" ? "Сақа в движении" : hud.phase === "resolving" ? "Считаем результат" : hud.phase === "completed" ? "Раунд завершён" : "Твой бросок"}</div></div>
+          <div className="play-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("modes")}><ArrowLeft /> {t.modesLabel}</Button><div><span>{t.modes[mode.id][0]}</span><strong>{t.modes[mode.id][1]}</strong></div><div className="phase-pill">{hud.phase === "simulating" ? t.moving : hud.phase === "resolving" ? t.resolving : hud.phase === "completed" ? t.completed : t.yourShot}</div></div>
           <div className="game-layout">
-            <aside className="hud-card score-card"><p className="eyebrow">Результат</p><div className="big-score"><strong>{mode.id === "first-hit" ? hud.bestShot : mode.requiredStreak ? hud.streak : hud.score}</strong><span>/ {mode.requiredStreak ?? hud.targetScore}</span></div><p>{mode.id === "first-hit" ? "за один бросок" : mode.requiredStreak ? "серия точных бросков" : "асыков выбито"}</p><Progress value={Math.min(100, ((mode.id === "first-hit" ? hud.bestShot : mode.requiredStreak ? hud.streak : hud.score) / (mode.requiredStreak ?? hud.targetScore)) * 100)} /><div className="throws-row"><span>Броски</span><strong>{hud.throwsUsed} / {hud.maxThrows}</strong></div><div className="throws-dots">{Array.from({ length: hud.maxThrows }, (_, index) => <i className={index < hud.throwsUsed ? "used" : ""} key={index} />)}</div></aside>
+            <aside className="hud-card score-card"><p className="eyebrow">{t.result}</p><div className="big-score"><strong>{mode.id === "first-hit" ? hud.bestShot : mode.requiredStreak ? hud.streak : hud.score}</strong><span>/ {mode.requiredStreak ?? hud.targetScore}</span></div><p>{mode.id === "first-hit" ? t.oneShot : mode.requiredStreak ? t.streakScore : t.asyksKnocked}</p><Progress value={Math.min(100, ((mode.id === "first-hit" ? hud.bestShot : mode.requiredStreak ? hud.streak : hud.score) / (mode.requiredStreak ?? hud.targetScore)) * 100)} /><div className="throws-row"><span>{t.throws}</span><strong>{hud.throwsUsed} / {hud.maxThrows}</strong></div><div className="throws-dots">{Array.from({ length: hud.maxThrows }, (_, index) => <i className={index < hud.throwsUsed ? "used" : ""} key={index} />)}</div></aside>
             <div className="stage-column">
-              {mode.id === "tutorial" && <div className="tutorial-banner"><span>{Math.min(tutorialStep + 1, 4)} / 4</span><p>{["Проведи сақа мышью к асыкам, затем отпусти.", "Меняй угол — линия показывает будущий бросок.", "Чем длиннее жест, тем сильнее удар. Отпусти сақа.", "Дождись остановки и посмотри результат.", "Отлично. Теперь выбей один асык за круг."][tutorialStep]}</p></div>}
-              <GameCanvas mode={mode} skin={SKINS.find((item) => item.id === progress.equippedSkin) ?? SKINS[0]} roundKey={roundKey} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} />
-              <p className="stage-hint">Зажми сақа, проведи мышью к цели и отпусти. Длина жеста задаёт силу.</p>
+              {mode.id === "tutorial" && <div className="tutorial-banner"><span>{Math.min(tutorialStep + 1, 4)} / 4</span><p>{t.tutorialSteps[tutorialStep]}</p></div>}
+              <GameCanvas mode={mode} skin={SKINS.find((item) => item.id === progress.equippedSkin) ?? SKINS[0]} roundKey={roundKey} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} language={language} theme={theme} />
+              <p className="stage-hint">{t.stageHint}</p>
             </div>
-            <aside className="hud-card gesture-card"><p className="eyebrow">Бросок мышью</p><div className="gesture-mark"><span className="mini-saka" /><i /></div><h3>Наведи и отпусти</h3><p>Веди сақа к цели. Чем длиннее жест, тем сильнее удар.</p><div className="control-note"><Crosshair /><p>Целься не только в центр: касательный удар сильнее разбрасывает крайние асыки.</p></div></aside>
+            <aside className="hud-card gesture-card"><p className="eyebrow">{t.dragShot}</p><div className="gesture-mark"><span className="mini-saka" /><i /></div><h3>{t.aimRelease}</h3><p>{t.gesture}</p><div className="control-note"><Crosshair /><p>{t.aimTip}</p></div></aside>
           </div>
-          {result && <div className="result-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title"><article className="result-card"><div className={`result-icon ${result.won ? "won" : ""}`}>{result.won ? <Trophy /> : <Target />}</div><p className="eyebrow">Раунд завершён</p><h2 id="result-title">{result.won ? "Жеңіс! Победа" : "Ещё один точный бросок"}</h2><p className="result-copy">{advice(result)}</p><div className="result-stats"><span><strong>{result.score}</strong><small>выбито</small></span><span><strong>{result.accuracy}%</strong><small>точность</small></span><span><strong>{result.bestShot}</strong><small>лучший бросок</small></span></div><div className="reward-row">{result.mode !== "tutorial" && <span className="reward-stars" aria-label={`${starsForRound(result)} из 3 звёзд`}>{[0, 1, 2].map((index) => <Star key={index} className={index < starsForRound(result) ? "earned" : ""} />)}</span>}<span><Coins /> {reward ? reward.earnedCoins > 0 ? `+${reward.earnedCoins} монет` : "Новые монеты не получены" : progressError ? "Награда не сохранена" : "Считаем награду…"}</span></div><div className="result-actions">{nextChallenge && <Button className="primary-action" onClick={() => startMode(nextChallenge)}>Следующее испытание</Button>}<Button variant={nextChallenge ? "outline" : "default"} onClick={() => startMode(mode)}><RotateCcw /> Сыграть ещё</Button><Button variant="ghost" onClick={() => setScreen("modes")}>К режимам</Button><Button variant="ghost" onClick={() => setScreen("shop")}><ShoppingBag /> Лавка</Button></div></article></div>}
+          {result && <div className="result-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title"><article className="result-card"><div className={`result-icon ${result.won ? "won" : ""}`}>{result.won ? <Trophy /> : <Target />}</div><p className="eyebrow">{t.completed}</p><h2 id="result-title">{result.won ? t.winTitle : t.loseTitle}</h2><p className="result-copy">{advice(result, language)}</p><div className="result-stats"><span><strong>{result.score}</strong><small>{t.knocked}</small></span><span><strong>{result.accuracy}%</strong><small>{t.accuracy}</small></span><span><strong>{result.bestShot}</strong><small>{t.bestShot}</small></span></div><div className="reward-row">{result.mode !== "tutorial" && <span className="reward-stars" aria-label={`${starsForRound(result)} ${t.starsOf}`}>{[0, 1, 2].map((index) => <Star key={index} className={index < starsForRound(result) ? "earned" : ""} />)}</span>}<span><Coins /> {reward ? reward.earnedCoins > 0 ? `+${reward.earnedCoins} ${t.coins}` : t.noNewCoins : progressError ? t.rewardNotSaved : t.countingReward}</span></div><div className="result-actions">{nextChallenge && <Button className="primary-action" onClick={() => startMode(nextChallenge)}>{t.nextChallenge}</Button>}<Button variant={nextChallenge ? "outline" : "default"} onClick={() => startMode(mode)}><RotateCcw /> {t.playAgain}</Button><Button variant="ghost" onClick={() => setScreen("modes")}>{t.toModes}</Button><Button variant="ghost" onClick={() => setScreen("shop")}><ShoppingBag /> {t.shop}</Button></div></article></div>}
         </section>
       )}
     </main>
