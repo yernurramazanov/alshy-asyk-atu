@@ -5,12 +5,15 @@ import {
   ArrowLeft,
   BookOpen,
   CircleHelp,
+  Coins,
   Crosshair,
   History,
   LockKeyhole,
   Medal,
   RotateCcw,
+  ShoppingBag,
   Sparkles,
+  Star,
   Target,
   Trophy,
   Volume2,
@@ -19,10 +22,10 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { DEFAULT_PROGRESS, normalizeProgress, SKINS, starsForRound, type ModeId, type PlayerProgress, type RoundResult, type SkinConfig, type SkinId } from "@/lib/game-progress";
 
-type Screen = "home" | "modes" | "play" | "rules";
+type Screen = "home" | "modes" | "play" | "rules" | "shop";
 type Phase = "aiming" | "charging" | "simulating" | "resolving" | "completed";
-type ModeId = "tutorial" | "classic" | "first-hit" | "streak" | "marksman";
 
 interface ModeConfig {
   id: ModeId;
@@ -38,6 +41,7 @@ interface ModeConfig {
 
 interface HudState {
   score: number;
+  bestShot: number;
   throwsUsed: number;
   maxThrows: number;
   targetScore: number;
@@ -46,51 +50,38 @@ interface HudState {
   lastKnocked: number;
 }
 
-interface RoundResult {
-  id: string;
-  mode: ModeId;
-  score: number;
-  throwsUsed: number;
-  successfulThrows: number;
-  accuracy: number;
-  won: boolean;
-  bestShot: number;
-  createdAt: string;
-}
-
-interface PlayerProgress {
-  bestScore: number;
-  tutorialCompleted: boolean;
-  unlockedLevel: number;
-  results: RoundResult[];
-}
-
 const STORAGE_KEY = "alshy.progress.v1";
-const DEFAULT_PROGRESS: PlayerProgress = { bestScore: 0, tutorialCompleted: false, unlockedLevel: 1, results: [] };
 
 const MODES: ModeConfig[] = [
   { id: "tutorial", eyebrow: "4 шага", title: "Обучение", description: "Освой прицел, силу и первый точный бросок.", targetScore: 1, maxThrows: 4, layout: "cluster", difficulty: "Начало" },
   { id: "classic", eyebrow: "Основной режим", title: "Классический раунд", description: "Выбей 8 из 15 асыков за 10 бросков.", targetScore: 8, maxThrows: 10, layout: "line", difficulty: "Стандарт" },
-  { id: "first-hit", eyebrow: "Испытание 1", title: "Первый удар", description: "Выбей 3 асыка за 5 бросков.", targetScore: 3, maxThrows: 5, layout: "cluster", difficulty: "Легко" },
+  { id: "first-hit", eyebrow: "Испытание 1", title: "Мощный удар", description: "Выбей 3 асыка одним броском. У тебя 4 попытки.", targetScore: 3, maxThrows: 4, layout: "cluster", difficulty: "Меткость" },
   { id: "streak", eyebrow: "Испытание 2", title: "Серия", description: "Сделай два результативных броска подряд.", targetScore: 2, maxThrows: 7, requiredStreak: 2, layout: "split", difficulty: "Средне" },
-  { id: "marksman", eyebrow: "Испытание 3", title: "Нағыз мерген", description: "Выбей 8 асыков, имея только 8 бросков.", targetScore: 8, maxThrows: 8, layout: "line", difficulty: "Сложно" },
+  { id: "marksman", eyebrow: "Испытание 3", title: "Нағыз мерген", description: "Выбей 8 асыков за 6 бросков.", targetScore: 8, maxThrows: 6, layout: "line", difficulty: "Сложно" },
 ];
 
-function loadProgress(): PlayerProgress {
-  if (typeof window === "undefined") return DEFAULT_PROGRESS;
+const STAR_HINTS: Partial<Record<ModeId, string>> = {
+  classic: "3★ — до 3 бросков · 2★ — до 6",
+  "first-hit": "3★ — выбей 5 разом · 2★ — 4 разом",
+  streak: "3★ — до 3 бросков · 2★ — до 5",
+  marksman: "3★ — до 3 бросков · 2★ — до 4",
+};
+
+function loadLegacyProgress(): PlayerProgress | null {
+  if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_PROGRESS;
-    const saved = JSON.parse(raw) as Partial<PlayerProgress>;
-    return {
-      bestScore: Math.max(0, Number(saved.bestScore) || 0),
-      tutorialCompleted: Boolean(saved.tutorialCompleted),
-      unlockedLevel: Math.min(4, Math.max(1, Number(saved.unlockedLevel) || 1)),
-      results: Array.isArray(saved.results) ? saved.results.slice(0, 8) : [],
-    };
-  } catch {
-    return DEFAULT_PROGRESS;
-  }
+    return raw ? normalizeProgress(JSON.parse(raw)) : null;
+  } catch { return null; }
+}
+
+async function progressRequest(action?: Record<string, unknown>) {
+  const response = await fetch("/api/progress", action ? {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(action),
+  } : { cache: "no-store" });
+  const data = await response.json() as { progress?: PlayerProgress; exists?: boolean; earnedCoins?: number; earnedStars?: number; error?: string };
+  if (!response.ok || !data.progress) throw new Error(data.error ?? "Прогресс временно недоступен.");
+  return data;
 }
 
 function modeById(id: ModeId) {
@@ -110,12 +101,14 @@ function LogoMark() {
 
 function GameCanvas({
   mode,
+  skin,
   roundKey,
   onHud,
   onComplete,
   onTutorialStep,
 }: {
   mode: ModeConfig;
+  skin: SkinConfig;
   roundKey: number;
   onHud: (hud: HudState) => void;
   onComplete: (result: RoundResult) => void;
@@ -183,7 +176,7 @@ function GameCanvas({
           }
           if (!this.textures.exists("saka")) {
             const g = this.make.graphics({ x: 0, y: 0 });
-            g.fillStyle(0x25d9c7, 1).fillRoundedRect(8, 7, 42, 22, 10);
+            g.fillStyle(0xffffff, 1).fillRoundedRect(8, 7, 42, 22, 10);
             g.fillCircle(11, 11, 9).fillCircle(47, 25, 9);
             g.lineStyle(3, 0x082f3f, 0.65).strokeRoundedRect(8, 7, 42, 22, 10);
             g.fillStyle(0xd8fff8, 0.9).fillEllipse(29, 13, 20, 7);
@@ -220,7 +213,7 @@ function GameCanvas({
         private spawnTargets() {
           const colors = [0xf6c85f, 0xe89b4c, 0xf1b94f, 0xffd782];
           this.positions().forEach((position, i) => {
-            const asyk = this.matter.add.image(position.x, position.y, "asyk", undefined, { frictionAir: 0.022, restitution: 0.84 });
+            const asyk = this.matter.add.image(position.x, position.y, "asyk", undefined, { frictionAir: 0.022, restitution: 0.84 }) as any & { scored?: boolean };
             asyk.setCircle(13).setMass(0.72).setFrictionAir(0.022).setBounce(0.84).setTint(colors[i % colors.length]);
             asyk.setAngle(i % 2 ? 180 : 0);
             asyk.scored = false;
@@ -230,7 +223,7 @@ function GameCanvas({
 
         private spawnSaka() {
           this.saka = this.matter.add.image(start.x, start.y, "saka", undefined, { frictionAir: 0.016, restitution: 0.88 });
-          this.saka.setCircle(18).setMass(4.4).setFrictionAir(0.016).setBounce(0.88).setDepth(10);
+          this.saka.setCircle(18).setMass(skin.mass).setFrictionAir(0.016).setBounce(0.88).setDepth(10).setTint(skin.tint);
         }
 
         private bindInput() {
@@ -295,7 +288,7 @@ function GameCanvas({
           this.settledSince = 0;
           this.aimGraphics.clear();
           const radians = Phaser.Math.DegToRad(this.aimAngle);
-          const speed = 12 + (this.aimPower / 100) * 24;
+          const speed = (12 + (this.aimPower / 100) * 24) * skin.speed;
           this.saka.setAwake();
           this.saka.setVelocity(Math.cos(radians) * speed, Math.sin(radians) * speed);
           this.saka.setAngularVelocity((this.aimAngle + 90) * 0.0018);
@@ -336,7 +329,7 @@ function GameCanvas({
           const count = this.shotKnocked;
           this.bestShot = Math.max(this.bestShot, count);
           if (count) { this.successfulThrows += 1; this.streak += 1; } else this.streak = 0;
-          const won = mode.requiredStreak ? this.streak >= mode.requiredStreak : this.score >= mode.targetScore;
+          const won = mode.id === "first-hit" ? this.bestShot >= 3 : mode.requiredStreak ? this.streak >= mode.requiredStreak : this.score >= mode.targetScore;
           if (won || this.throwsUsed >= mode.maxThrows) {
             this.phase = "completed";
             this.matter.world.pause();
@@ -373,7 +366,7 @@ function GameCanvas({
         }
 
         private emitHud(lastKnocked: number) {
-          this.game.events.emit("hud", { score: this.score, throwsUsed: this.throwsUsed, maxThrows: mode.maxThrows, targetScore: mode.targetScore, streak: this.streak, phase: this.phase, lastKnocked } satisfies HudState);
+          this.game.events.emit("hud", { score: this.score, bestShot: this.bestShot, throwsUsed: this.throwsUsed, maxThrows: mode.maxThrows, targetScore: mode.targetScore, streak: this.streak, phase: this.phase, lastKnocked } satisfies HudState);
         }
       }
 
@@ -395,7 +388,7 @@ function GameCanvas({
 
     void boot();
     return () => { cancelled = true; gameRef.current?.destroy(true); gameRef.current = null; };
-  }, [mode, roundKey, onComplete, onHud, onTutorialStep]);
+  }, [mode, skin, roundKey, onComplete, onHud, onTutorialStep]);
 
   return (
     <div className="game-stage-wrap">
@@ -413,37 +406,59 @@ export default function GameApp() {
   const [roundKey, setRoundKey] = useState(0);
   const [muted, setMuted] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
-  const [hud, setHud] = useState<HudState>({ score: 0, throwsUsed: 0, maxThrows: 10, targetScore: 8, streak: 0, phase: "aiming", lastKnocked: 0 });
+  const [hud, setHud] = useState<HudState>({ score: 0, bestShot: 0, throwsUsed: 0, maxThrows: 10, targetScore: 8, streak: 0, phase: "aiming", lastKnocked: 0 });
   const [result, setResult] = useState<RoundResult | null>(null);
+  const [reward, setReward] = useState<{ earnedCoins: number; earnedStars: number } | null>(null);
+  const [progressError, setProgressError] = useState<string | null>(null);
+  const [pendingSkin, setPendingSkin] = useState<SkinId | null>(null);
 
-  useEffect(() => { const saved = loadProgress(); progressRef.current = saved; setProgress(saved); setReady(true); }, []);
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      try {
+        let data = await progressRequest();
+        const legacy = loadLegacyProgress();
+        if (!data.exists && legacy) data = await progressRequest({ action: "import", legacy });
+        if (active) { progressRef.current = data.progress!; setProgress(data.progress!); }
+      } catch (error) {
+        if (active) setProgressError(error instanceof Error ? error.message : "Прогресс временно недоступен.");
+      } finally { if (active) setReady(true); }
+    }
+    void load();
+    return () => { active = false; };
+  }, []);
 
   const saveProgress = useCallback((next: PlayerProgress) => {
     progressRef.current = next;
     setProgress(next);
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* keep playing */ }
+    setProgressError(null);
   }, []);
 
   const startMode = useCallback((selected: ModeConfig) => {
     setMode(selected);
-    setHud({ score: 0, throwsUsed: 0, maxThrows: selected.maxThrows, targetScore: selected.targetScore, streak: 0, phase: "aiming", lastKnocked: 0 });
-    setTutorialStep(0); setResult(null);
+    setHud({ score: 0, bestShot: 0, throwsUsed: 0, maxThrows: selected.maxThrows, targetScore: selected.targetScore, streak: 0, phase: "aiming", lastKnocked: 0 });
+    setTutorialStep(0); setResult(null); setReward(null);
     setRoundKey((value) => value + 1);
     setScreen("play");
   }, []);
 
   const handleComplete = useCallback((roundResult: RoundResult) => {
     setResult(roundResult);
-    const current = progressRef.current;
-    const challengeIndex = ["first-hit", "streak", "marksman"].indexOf(roundResult.mode);
-    const unlockedLevel = roundResult.won && challengeIndex >= 0 ? Math.max(current.unlockedLevel, Math.min(4, challengeIndex + 2)) : current.unlockedLevel;
-    saveProgress({
-      bestScore: Math.max(current.bestScore, roundResult.score),
-      tutorialCompleted: current.tutorialCompleted || roundResult.mode === "tutorial",
-      unlockedLevel,
-      results: [roundResult, ...current.results].slice(0, 8),
-    });
+    setReward(null);
+    void progressRequest({ action: "round", result: roundResult }).then((data) => {
+      saveProgress(data.progress!);
+      setReward({ earnedCoins: data.earnedCoins ?? 0, earnedStars: data.earnedStars ?? 0 });
+    }).catch((error) => setProgressError(error instanceof Error ? error.message : "Не удалось сохранить результат."));
   }, [saveProgress]);
+
+  const handleSkin = useCallback((skin: SkinConfig) => {
+    if (pendingSkin) return;
+    setPendingSkin(skin.id);
+    const action = progressRef.current.ownedSkins.includes(skin.id) ? "equip" : "purchase";
+    void progressRequest({ action, skinId: skin.id }).then((data) => saveProgress(data.progress!))
+      .catch((error) => setProgressError(error instanceof Error ? error.message : "Не удалось обновить лавку."))
+      .finally(() => setPendingSkin(null));
+  }, [pendingSkin, saveProgress]);
 
   const nextChallenge = useMemo(() => {
     if (!result?.won) return null;
@@ -459,11 +474,14 @@ export default function GameApp() {
       <header className="topbar">
         <button className="brand" onClick={() => setScreen("home")} type="button" aria-label="На главную"><LogoMark /><span><strong>ALSHY</strong><small>цифровой асық ату</small></span></button>
         <div className="topbar-stats">
+          <span className="wallet-balance"><Coins /> <strong>{progress.coins}</strong> монет</span>
+          {screen !== "play" && <Button variant="ghost" className="topbar-shop" onClick={() => setScreen("shop")}><ShoppingBag /> Лавка</Button>}
           <span><Trophy /> Рекорд <strong>{progress.bestScore}</strong></span>
           <Button variant="ghost" size="icon" className="icon-button" aria-label={muted ? "Включить звук" : "Выключить звук"} onClick={() => setMuted((value) => !value)}>{muted ? <VolumeX /> : <Volume2 />}</Button>
           <Button variant="ghost" size="icon" className="icon-button" aria-label="Правила" onClick={() => setScreen("rules")}><CircleHelp /></Button>
         </div>
       </header>
+      {progressError && <div className="progress-warning" role="status">{progressError} {screen === "shop" && "Покупки пока недоступны."}</div>}
 
       {screen === "home" && (
         <section className="home-screen">
@@ -475,7 +493,7 @@ export default function GameApp() {
               <Button className="primary-action" size="lg" onClick={() => startMode(modeById("tutorial"))}><BookOpen /> Начать обучение</Button>
               <Button className="secondary-action" variant="outline" size="lg" onClick={() => setScreen("modes")}>Выбрать режим</Button>
             </div>
-            <div className="quick-facts"><span><Crosshair /> Честная физика</span><span><Target /> 15 асыков</span><span><Medal /> Цель — выбить 8</span></div>
+            <div className="quick-facts"><span><Crosshair /> Честная физика</span><span><Star /> Звёзды за мастерство</span><span><Coins /> Монеты за новые цели</span></div>
           </div>
           <div className="home-arena" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="display-saka"><span /></div><div className="target-row">{Array.from({ length: 9 }, (_, index) => <i key={index} style={{ "--i": index } as React.CSSProperties} />)}</div><div className="arena-label"><span>8</span><small>асыков до победы</small></div></div>
           {progress.results.length > 0 && <aside className="recent-card"><p className="eyebrow"><History /> Последний раунд</p><strong>{progress.results[0].score} выбито</strong><span>{progress.results[0].won ? "Победа" : "Попробуй ещё"} · {progress.results[0].accuracy}% точности</span></aside>}
@@ -489,9 +507,27 @@ export default function GameApp() {
             {MODES.filter((item) => item.id !== "tutorial").map((item) => {
               const challengeNumber = ["first-hit", "streak", "marksman"].indexOf(item.id);
               const locked = challengeNumber >= 0 && challengeNumber + 1 > progress.unlockedLevel;
-              return <article className={`mode-card ${locked ? "is-locked" : ""}`} key={item.id}><div className="mode-card-top"><span>{item.eyebrow}</span><small>{item.difficulty}</small></div><div className="mode-symbol">{locked ? <LockKeyhole /> : item.id === "classic" ? <Target /> : <Sparkles />}</div><h2>{item.title}</h2><p>{item.description}</p><Button disabled={locked} onClick={() => startMode(item)}>{locked ? "Сначала пройди предыдущий" : "Играть"}</Button></article>;
+              const stars = progress.stars[item.id] ?? 0;
+              return <article className={`mode-card ${locked ? "is-locked" : ""}`} key={item.id}><div className="mode-card-top"><span>{item.eyebrow}</span><small>{item.difficulty}</small></div><div className="mode-symbol">{locked ? <LockKeyhole /> : item.id === "classic" ? <Target /> : <Sparkles />}</div><h2>{item.title}</h2><p>{item.description}</p><div className="star-rating" aria-label={`${stars} из 3 звёзд`}>{[0, 1, 2].map((index) => <Star key={index} className={index < stars ? "earned" : ""} />)}</div><p className="star-hint">{STAR_HINTS[item.id]}</p><Button disabled={locked} onClick={() => startMode(item)}>{locked ? "Сначала пройди предыдущий" : "Играть"}</Button></article>;
             })}
           </div>
+        </section>
+      )}
+
+      {screen === "shop" && (
+        <section className="shop-screen page-panel">
+          <div className="section-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> На главную</Button><p className="eyebrow">Коллекция сақа</p><h1>Лавка</h1><p>Зарабатывай звёзды в испытаниях. Каждая новая звезда приносит 20 монет; первая победа в обучении — ещё 20.</p></div>
+          <div className="shop-balance"><Coins /><span>Твой баланс</span><strong>{progress.coins} монет</strong></div>
+          <div className="shop-grid">{SKINS.map((skin) => {
+            const owned = progress.ownedSkins.includes(skin.id);
+            const equipped = progress.equippedSkin === skin.id;
+            return <article className={`shop-card ${equipped ? "is-equipped" : ""}`} key={skin.id}>
+              <div className="shop-card-top"><span className="skin-swatch" style={{ backgroundColor: `#${skin.tint.toString(16).padStart(6, "0")}` }} /><span>{equipped ? "Выбран" : owned ? "Открыт" : `${skin.price} монет`}</span></div>
+              <h2>{skin.title}</h2><p>{skin.description}</p>
+              <Button disabled={equipped || Boolean(pendingSkin) || Boolean(progressError) || (!owned && progress.coins < skin.price)} onClick={() => handleSkin(skin)}>{equipped ? "Используется" : pendingSkin === skin.id ? "Сохраняем…" : owned ? "Выбрать" : progress.coins < skin.price ? "Недостаточно монет" : "Купить"}</Button>
+            </article>;
+          })}</div>
+          <p className="shop-footnote">Монеты выдаются только за новые звёзды. Повторение того же результата не увеличивает баланс.</p>
         </section>
       )}
 
@@ -512,15 +548,15 @@ export default function GameApp() {
         <section className="play-screen">
           <div className="play-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("modes")}><ArrowLeft /> Режимы</Button><div><span>{mode.eyebrow}</span><strong>{mode.title}</strong></div><div className="phase-pill">{hud.phase === "simulating" ? "Сақа в движении" : hud.phase === "resolving" ? "Считаем результат" : hud.phase === "completed" ? "Раунд завершён" : "Твой бросок"}</div></div>
           <div className="game-layout">
-            <aside className="hud-card score-card"><p className="eyebrow">Результат</p><div className="big-score"><strong>{mode.requiredStreak ? hud.streak : hud.score}</strong><span>/ {mode.requiredStreak ?? hud.targetScore}</span></div><p>{mode.requiredStreak ? "серия точных бросков" : "асыков выбито"}</p><Progress value={Math.min(100, ((mode.requiredStreak ? hud.streak : hud.score) / (mode.requiredStreak ?? hud.targetScore)) * 100)} /><div className="throws-row"><span>Броски</span><strong>{hud.throwsUsed} / {hud.maxThrows}</strong></div><div className="throws-dots">{Array.from({ length: hud.maxThrows }, (_, index) => <i className={index < hud.throwsUsed ? "used" : ""} key={index} />)}</div></aside>
+            <aside className="hud-card score-card"><p className="eyebrow">Результат</p><div className="big-score"><strong>{mode.id === "first-hit" ? hud.bestShot : mode.requiredStreak ? hud.streak : hud.score}</strong><span>/ {mode.requiredStreak ?? hud.targetScore}</span></div><p>{mode.id === "first-hit" ? "за один бросок" : mode.requiredStreak ? "серия точных бросков" : "асыков выбито"}</p><Progress value={Math.min(100, ((mode.id === "first-hit" ? hud.bestShot : mode.requiredStreak ? hud.streak : hud.score) / (mode.requiredStreak ?? hud.targetScore)) * 100)} /><div className="throws-row"><span>Броски</span><strong>{hud.throwsUsed} / {hud.maxThrows}</strong></div><div className="throws-dots">{Array.from({ length: hud.maxThrows }, (_, index) => <i className={index < hud.throwsUsed ? "used" : ""} key={index} />)}</div></aside>
             <div className="stage-column">
               {mode.id === "tutorial" && <div className="tutorial-banner"><span>{Math.min(tutorialStep + 1, 4)} / 4</span><p>{["Проведи сақа мышью к асыкам, затем отпусти.", "Меняй угол — линия показывает будущий бросок.", "Чем длиннее жест, тем сильнее удар. Отпусти сақа.", "Дождись остановки и посмотри результат.", "Отлично. Теперь выбей один асык за круг."][tutorialStep]}</p></div>}
-              <GameCanvas mode={mode} roundKey={roundKey} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} />
+              <GameCanvas mode={mode} skin={SKINS.find((item) => item.id === progress.equippedSkin) ?? SKINS[0]} roundKey={roundKey} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} />
               <p className="stage-hint">Зажми сақа, проведи мышью к цели и отпусти. Длина жеста задаёт силу.</p>
             </div>
             <aside className="hud-card gesture-card"><p className="eyebrow">Бросок мышью</p><div className="gesture-mark"><span className="mini-saka" /><i /></div><h3>Наведи и отпусти</h3><p>Веди сақа к цели. Чем длиннее жест, тем сильнее удар.</p><div className="control-note"><Crosshair /><p>Целься не только в центр: касательный удар сильнее разбрасывает крайние асыки.</p></div></aside>
           </div>
-          {result && <div className="result-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title"><article className="result-card"><div className={`result-icon ${result.won ? "won" : ""}`}>{result.won ? <Trophy /> : <Target />}</div><p className="eyebrow">Раунд завершён</p><h2 id="result-title">{result.won ? "Жеңіс! Победа" : "Ещё один точный бросок"}</h2><p className="result-copy">{advice(result)}</p><div className="result-stats"><span><strong>{result.score}</strong><small>выбито</small></span><span><strong>{result.accuracy}%</strong><small>точность</small></span><span><strong>{result.bestShot}</strong><small>лучший бросок</small></span></div><div className="result-actions">{nextChallenge && <Button className="primary-action" onClick={() => startMode(nextChallenge)}>Следующее испытание</Button>}<Button variant={nextChallenge ? "outline" : "default"} onClick={() => startMode(mode)}><RotateCcw /> Сыграть ещё</Button><Button variant="ghost" onClick={() => setScreen("modes")}>К режимам</Button></div></article></div>}
+          {result && <div className="result-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title"><article className="result-card"><div className={`result-icon ${result.won ? "won" : ""}`}>{result.won ? <Trophy /> : <Target />}</div><p className="eyebrow">Раунд завершён</p><h2 id="result-title">{result.won ? "Жеңіс! Победа" : "Ещё один точный бросок"}</h2><p className="result-copy">{advice(result)}</p><div className="result-stats"><span><strong>{result.score}</strong><small>выбито</small></span><span><strong>{result.accuracy}%</strong><small>точность</small></span><span><strong>{result.bestShot}</strong><small>лучший бросок</small></span></div><div className="reward-row">{result.mode !== "tutorial" && <span className="reward-stars" aria-label={`${starsForRound(result)} из 3 звёзд`}>{[0, 1, 2].map((index) => <Star key={index} className={index < starsForRound(result) ? "earned" : ""} />)}</span>}<span><Coins /> {reward ? reward.earnedCoins > 0 ? `+${reward.earnedCoins} монет` : "Новые монеты не получены" : progressError ? "Награда не сохранена" : "Считаем награду…"}</span></div><div className="result-actions">{nextChallenge && <Button className="primary-action" onClick={() => startMode(nextChallenge)}>Следующее испытание</Button>}<Button variant={nextChallenge ? "outline" : "default"} onClick={() => startMode(mode)}><RotateCcw /> Сыграть ещё</Button><Button variant="ghost" onClick={() => setScreen("modes")}>К режимам</Button><Button variant="ghost" onClick={() => setScreen("shop")}><ShoppingBag /> Лавка</Button></div></article></div>}
         </section>
       )}
     </main>
