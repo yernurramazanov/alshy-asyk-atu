@@ -6,7 +6,6 @@ import {
   BookOpen,
   CircleHelp,
   Crosshair,
-  Gauge,
   History,
   LockKeyhole,
   Medal,
@@ -20,7 +19,6 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Slider } from "@/components/ui/slider";
 
 type Screen = "home" | "modes" | "play" | "rules";
 type Phase = "aiming" | "charging" | "simulating" | "resolving" | "completed";
@@ -113,18 +111,12 @@ function LogoMark() {
 function GameCanvas({
   mode,
   roundKey,
-  angle,
-  power,
-  onAim,
   onHud,
   onComplete,
   onTutorialStep,
 }: {
   mode: ModeConfig;
   roundKey: number;
-  angle: number;
-  power: number;
-  onAim: (angle: number, power: number) => void;
   onHud: (hud: HudState) => void;
   onComplete: (result: RoundResult) => void;
   onTutorialStep: (step: number) => void;
@@ -157,6 +149,9 @@ function GameCanvas({
         private settledSince = 0;
         private launchedAt = 0;
         private dragActive = false;
+        private dragDistance = 0;
+        private shotKnocked = 0;
+        private activeKnocked: Array<any & { scored?: boolean }> = [];
         private tutorialStep = 0;
 
         constructor() { super("asyk-scene"); }
@@ -168,21 +163,13 @@ function GameCanvas({
           this.spawnSaka();
           this.aimGraphics = this.add.graphics().setDepth(20);
           this.bindInput();
-          this.game.events.on("control:setAim", this.handleSetAim, this);
-          this.game.events.on("control:shoot", this.shoot, this);
-          this.input.keyboard?.on("keydown-LEFT", () => this.setAim(this.aimAngle - 3, this.aimPower));
-          this.input.keyboard?.on("keydown-RIGHT", () => this.setAim(this.aimAngle + 3, this.aimPower));
-          this.input.keyboard?.on("keydown-UP", () => this.setAim(this.aimAngle, this.aimPower + 4));
-          this.input.keyboard?.on("keydown-DOWN", () => this.setAim(this.aimAngle, this.aimPower - 4));
-          this.input.keyboard?.on("keydown-SPACE", () => this.shoot());
           this.drawAim();
           this.emitHud(0);
           this.emitTutorial(0);
         }
 
         shutdown() {
-          this.game.events.off("control:setAim", this.handleSetAim, this);
-          this.game.events.off("control:shoot", this.shoot, this);
+          this.input.removeAllListeners();
         }
 
         private createTextures() {
@@ -206,9 +193,12 @@ function GameCanvas({
         private drawArena() {
           const g = this.add.graphics();
           g.fillStyle(0x071822, 1).fillRect(0, 0, 960, 640);
-          g.fillStyle(0x0c2630, 1).fillCircle(arena.x, arena.y, arena.radius + 32);
+          g.fillStyle(0x7d241e, 1).fillCircle(arena.x, arena.y, arena.radius + 38);
+          g.fillStyle(0xe3b65d, 1).fillCircle(arena.x, arena.y, arena.radius + 32);
+          g.fillStyle(0x0c3037, 1).fillCircle(arena.x, arena.y, arena.radius + 26);
           g.fillStyle(0xc98b47, 1).fillCircle(arena.x, arena.y, arena.radius);
-          g.lineStyle(5, 0xf6ddaa, 0.95).strokeCircle(arena.x, arena.y, arena.radius);
+          g.lineStyle(6, 0xf6ddaa, 0.98).strokeCircle(arena.x, arena.y, arena.radius);
+          g.lineStyle(2, 0x9b2c23, 0.9).strokeCircle(arena.x, arena.y, arena.radius - 9);
           g.lineStyle(2, 0x744624, 0.6).lineBetween(arena.x - 182, arena.y, arena.x + 182, arena.y);
           g.lineStyle(2, 0x25d9c7, 0.55).lineBetween(308, 548, 652, 548);
           g.fillStyle(0x132f36, 0.7);
@@ -218,7 +208,7 @@ function GameCanvas({
 
         private positions() {
           if (mode.layout === "cluster") {
-            return Array.from({ length: 15 }, (_, i) => ({ x: 424 + (i % 5) * 28 + (Math.floor(i / 5) % 2) * 12, y: 270 + Math.floor(i / 5) * 31 }));
+            return Array.from({ length: 15 }, (_, i) => ({ x: 408 + (i % 5) * 36 + (Math.floor(i / 5) % 2) * 10, y: 262 + Math.floor(i / 5) * 37 }));
           }
           if (mode.layout === "split") {
             return Array.from({ length: 15 }, (_, i) => ({ x: i < 8 ? 330 + i * 30 : 392 + (i - 8) * 30, y: i < 8 ? 280 : 332 }));
@@ -229,8 +219,8 @@ function GameCanvas({
         private spawnTargets() {
           const colors = [0xf6c85f, 0xe89b4c, 0xf1b94f, 0xffd782];
           this.positions().forEach((position, i) => {
-            const asyk = this.matter.add.image(position.x, position.y, "asyk", undefined, { frictionAir: 0.04, restitution: 0.72 });
-            asyk.setCircle(13).setMass(1).setFrictionAir(0.04).setBounce(0.72).setTint(colors[i % colors.length]);
+            const asyk = this.matter.add.image(position.x, position.y, "asyk", undefined, { frictionAir: 0.022, restitution: 0.84 });
+            asyk.setCircle(13).setMass(0.72).setFrictionAir(0.022).setBounce(0.84).setTint(colors[i % colors.length]);
             asyk.setAngle(i % 2 ? 180 : 0);
             asyk.scored = false;
             this.asyks.push(asyk);
@@ -238,8 +228,8 @@ function GameCanvas({
         }
 
         private spawnSaka() {
-          this.saka = this.matter.add.image(start.x, start.y, "saka", undefined, { frictionAir: 0.028, restitution: 0.76 });
-          this.saka.setCircle(18).setMass(3.4).setFrictionAir(0.028).setBounce(0.76).setDepth(10);
+          this.saka = this.matter.add.image(start.x, start.y, "saka", undefined, { frictionAir: 0.016, restitution: 0.88 });
+          this.saka.setCircle(18).setMass(4.4).setFrictionAir(0.016).setBounce(0.88).setDepth(10);
         }
 
         private bindInput() {
@@ -247,6 +237,7 @@ function GameCanvas({
             if (this.phase !== "aiming") return;
             if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, start.x, start.y) > 105) return;
             this.dragActive = true;
+            this.dragDistance = 0;
             this.phase = "charging";
             this.emitHud(0);
           });
@@ -254,28 +245,27 @@ function GameCanvas({
             if (!this.dragActive || this.phase !== "charging") return;
             const dx = start.x - pointer.worldX;
             const dy = start.y - pointer.worldY;
-            this.setAim(Phaser.Math.RadToDeg(Math.atan2(dy, dx)), Phaser.Math.Clamp((Math.hypot(dx, dy) / 145) * 100, 18, 100));
+            this.dragDistance = Math.hypot(dx, dy);
+            this.setAim(Phaser.Math.RadToDeg(Math.atan2(dy, dx)), Phaser.Math.Clamp((this.dragDistance / 82) * 100, 18, 100));
             this.emitTutorial(this.aimPower > 35 ? 2 : 1);
           });
           this.input.on("pointerup", () => {
             if (!this.dragActive) return;
             this.dragActive = false;
+            if (this.dragDistance < 22) {
+              this.phase = "aiming";
+              this.emitHud(0);
+              this.drawAim();
+              return;
+            }
             this.shoot();
           });
-        }
-
-        private handleSetAim(payload: unknown) {
-          if (this.phase !== "aiming" && this.phase !== "charging") return;
-          const next = payload as { angle?: number; power?: number };
-          this.setAim(next.angle ?? this.aimAngle, next.power ?? this.aimPower);
-          this.emitTutorial((next.power ?? this.aimPower) > 35 ? 2 : 1);
         }
 
         private setAim(nextAngle: number, nextPower: number) {
           this.aimAngle = Phaser.Math.Clamp(nextAngle, -155, -25);
           this.aimPower = Phaser.Math.Clamp(nextPower, 18, 100);
           this.drawAim();
-          onAim(Math.round(this.aimAngle), Math.round(this.aimPower));
         }
 
         private drawAim() {
@@ -294,11 +284,13 @@ function GameCanvas({
           if (this.phase !== "aiming" && this.phase !== "charging") return;
           this.phase = "simulating";
           this.throwsUsed += 1;
+          this.shotKnocked = 0;
+          this.activeKnocked = [];
           this.launchedAt = this.time.now;
           this.settledSince = 0;
           this.aimGraphics.clear();
           const radians = Phaser.Math.DegToRad(this.aimAngle);
-          const speed = 8 + (this.aimPower / 100) * 18;
+          const speed = 12 + (this.aimPower / 100) * 24;
           this.saka.setVelocity(Math.cos(radians) * speed, Math.sin(radians) * speed);
           this.saka.setAngularVelocity((this.aimAngle + 90) * 0.0018);
           this.emitHud(0);
@@ -307,6 +299,18 @@ function GameCanvas({
 
         update(time: number) {
           if (this.phase !== "simulating") return;
+          const newlyKnocked = this.asyks.filter((asyk) => !asyk.scored && Phaser.Math.Distance.Between(asyk.x, asyk.y, arena.x, arena.y) - 14 > arena.radius + 2);
+          if (newlyKnocked.length) {
+            newlyKnocked.forEach((asyk) => {
+              asyk.scored = true;
+              asyk.setTint(0x25d9c7);
+              asyk.setFrictionAir(0.07);
+              this.activeKnocked.push(asyk);
+            });
+            this.shotKnocked += newlyKnocked.length;
+            this.score += newlyKnocked.length;
+            this.emitHud(this.shotKnocked);
+          }
           const allSlow = [this.saka, ...this.asyks.filter((asyk) => !asyk.scored)].every((body) => {
             const velocity = body.body?.velocity ?? { x: 0, y: 0 };
             return Math.hypot(velocity.x, velocity.y) < 0.16 && Math.abs(body.body?.angularVelocity ?? 0) < 0.025;
@@ -321,10 +325,9 @@ function GameCanvas({
         private resolveShot() {
           if (this.phase !== "simulating") return;
           this.phase = "resolving";
-          const knocked = this.asyks.filter((asyk) => !asyk.scored && Phaser.Math.Distance.Between(asyk.x, asyk.y, arena.x, arena.y) - 14 > arena.radius + 2);
-          knocked.forEach((asyk) => { asyk.scored = true; asyk.setTint(0x25d9c7); asyk.setStatic(true); });
-          const count = knocked.length;
-          this.score += count;
+          const knocked = this.activeKnocked;
+          knocked.forEach((asyk) => asyk.setStatic(true));
+          const count = this.shotKnocked;
           this.bestShot = Math.max(this.bestShot, count);
           if (count) { this.successfulThrows += 1; this.streak += 1; } else this.streak = 0;
           const won = mode.requiredStreak ? this.streak >= mode.requiredStreak : this.score >= mode.targetScore;
@@ -350,6 +353,7 @@ function GameCanvas({
           this.time.delayedCall(430, () => {
             knocked.forEach((asyk) => { this.matter.world.remove(asyk.body); asyk.destroy(); });
             this.saka.setPosition(start.x, start.y).setVelocity(0, 0).setAngularVelocity(0).setAngle(0).setAwake();
+            this.dragDistance = 0;
             this.phase = "aiming";
             this.emitHud(count);
             this.drawAim();
@@ -385,14 +389,11 @@ function GameCanvas({
 
     void boot();
     return () => { cancelled = true; gameRef.current?.destroy(true); gameRef.current = null; };
-  }, [mode, roundKey, onAim, onComplete, onHud, onTutorialStep]);
-
-  useEffect(() => { gameRef.current?.events.emit("control:setAim", { angle, power }); }, [angle, power]);
+  }, [mode, roundKey, onComplete, onHud, onTutorialStep]);
 
   return (
     <div className="game-stage-wrap">
       <div ref={hostRef} className="game-stage" aria-label="Игровое поле асық ату" />
-      <button className="canvas-shoot" onClick={() => gameRef.current?.events.emit("control:shoot")} type="button">Бросить сақа</button>
     </div>
   );
 }
@@ -403,8 +404,6 @@ export default function GameApp() {
   const [progress, setProgress] = useState<PlayerProgress>(DEFAULT_PROGRESS);
   const [ready, setReady] = useState(false);
   const [roundKey, setRoundKey] = useState(0);
-  const [angle, setAngle] = useState(-90);
-  const [power, setPower] = useState(58);
   const [muted, setMuted] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const [hud, setHud] = useState<HudState>({ score: 0, throwsUsed: 0, maxThrows: 10, targetScore: 8, streak: 0, phase: "aiming", lastKnocked: 0 });
@@ -417,15 +416,10 @@ export default function GameApp() {
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* keep playing */ }
   }, []);
 
-  const handleAim = useCallback((nextAngle: number, nextPower: number) => {
-    setAngle(nextAngle);
-    setPower(nextPower);
-  }, []);
-
   const startMode = useCallback((selected: ModeConfig) => {
     setMode(selected);
     setHud({ score: 0, throwsUsed: 0, maxThrows: selected.maxThrows, targetScore: selected.targetScore, streak: 0, phase: "aiming", lastKnocked: 0 });
-    setAngle(-90); setPower(58); setTutorialStep(0); setResult(null);
+    setTutorialStep(0); setResult(null);
     setRoundKey((value) => value + 1);
     setScreen("play");
   }, []);
@@ -512,10 +506,10 @@ export default function GameApp() {
             <aside className="hud-card score-card"><p className="eyebrow">Результат</p><div className="big-score"><strong>{mode.requiredStreak ? hud.streak : hud.score}</strong><span>/ {mode.requiredStreak ?? hud.targetScore}</span></div><p>{mode.requiredStreak ? "серия точных бросков" : "асыков выбито"}</p><Progress value={Math.min(100, ((mode.requiredStreak ? hud.streak : hud.score) / (mode.requiredStreak ?? hud.targetScore)) * 100)} /><div className="throws-row"><span>Броски</span><strong>{hud.throwsUsed} / {hud.maxThrows}</strong></div><div className="throws-dots">{Array.from({ length: hud.maxThrows }, (_, index) => <i className={index < hud.throwsUsed ? "used" : ""} key={index} />)}</div></aside>
             <div className="stage-column">
               {mode.id === "tutorial" && <div className="tutorial-banner"><span>{Math.min(tutorialStep + 1, 4)} / 4</span><p>{["Потяни сақа назад, чтобы выбрать направление.", "Меняй угол — линия показывает будущий бросок.", "Добавь силы и отпусти сақа.", "Дождись остановки и посмотри результат.", "Отлично. Теперь выбей один асык за круг."][tutorialStep]}</p></div>}
-              <GameCanvas mode={mode} roundKey={roundKey} angle={angle} power={power} onAim={handleAim} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} />
-              <p className="stage-hint">Потяни сақа назад и отпусти · ← → меняют угол, ↑ ↓ — силу, пробел — бросок</p>
+              <GameCanvas mode={mode} roundKey={roundKey} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} />
+              <p className="stage-hint">Зажми сақа, потяни назад и отпусти. Длина жеста задаёт силу, направление — угол броска.</p>
             </div>
-            <aside className="hud-card controls-card"><p className="eyebrow">Точный контроль</p><div className="control-label"><span><Crosshair /> Угол</span><strong>{angle}°</strong></div><Slider min={-155} max={-25} step={1} value={[angle]} onValueChange={(value) => setAngle(value[0])} disabled={["simulating", "resolving", "completed"].includes(hud.phase)} /><div className="control-label power-label"><span><Gauge /> Сила</span><strong>{power}%</strong></div><Slider min={18} max={100} step={1} value={[power]} onValueChange={(value) => setPower(value[0])} disabled={["simulating", "resolving", "completed"].includes(hud.phase)} /><div className="power-scale"><span>Мягко</span><span>Сильно</span></div><div className="control-note"><span className="mini-saka" /><p>Бирюзовый асык — твой сақа. Целься в край группы, чтобы передать импульс дальше.</p></div></aside>
+            <aside className="hud-card gesture-card"><p className="eyebrow">Бросок рукой</p><div className="gesture-mark"><span className="mini-saka" /><i /></div><h3>Потяни и отпусти</h3><p>Чем дальше оттянешь сақа, тем сильнее удар. Направление жеста задаёт траекторию.</p><div className="control-note"><Crosshair /><p>Целься не только в центр: касательный удар сильнее разбрасывает крайние асыки.</p></div></aside>
           </div>
           {result && <div className="result-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title"><article className="result-card"><div className={`result-icon ${result.won ? "won" : ""}`}>{result.won ? <Trophy /> : <Target />}</div><p className="eyebrow">Раунд завершён</p><h2 id="result-title">{result.won ? "Жеңіс! Победа" : "Ещё один точный бросок"}</h2><p className="result-copy">{advice(result)}</p><div className="result-stats"><span><strong>{result.score}</strong><small>выбито</small></span><span><strong>{result.accuracy}%</strong><small>точность</small></span><span><strong>{result.bestShot}</strong><small>лучший бросок</small></span></div><div className="result-actions">{nextChallenge && <Button className="primary-action" onClick={() => startMode(nextChallenge)}>Следующее испытание</Button>}<Button variant={nextChallenge ? "outline" : "default"} onClick={() => startMode(mode)}><RotateCcw /> Сыграть ещё</Button><Button variant="ghost" onClick={() => setScreen("modes")}>К режимам</Button></div></article></div>}
         </section>
