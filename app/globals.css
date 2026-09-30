@@ -54,7 +54,6 @@ button { cursor: pointer; }
 .loading-shell { display: grid; place-items: center; color: #9fb5ba; }
 
 .topbar { height: 82px; display: flex; align-items: center; justify-content: space-between; padding: 0 4vw 8px; border-bottom: 1px solid #d5a54c55; background: rgb(7 25 35 / 90%); backdrop-filter: blur(18px); position: relative; z-index: 40; }
-.topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 12px; background: url("/ornament-koshkar-muyiz.png") center / auto 33px repeat-x; opacity: .78; pointer-events: none; }
 .brand { display: flex; align-items: center; gap: 12px; border: 0; background: none; color: inherit; text-align: left; }
 .brand strong { display: block; font-family: Georgia, "Times New Roman", serif; font-size: 1.13rem; letter-spacing: .21em; color: #f5d486; }
 .brand small { display: block; margin-top: 2px; color: #78939a; font-size: .72rem; }
@@ -70,7 +69,7 @@ button { cursor: pointer; }
 
 .home-screen { min-height: calc(100svh - 82px); max-width: 1440px; margin: 0 auto; padding: clamp(44px, 7vh, 90px) 5vw 48px; display: grid; grid-template-columns: minmax(340px, .86fr) minmax(460px, 1.14fr); align-items: center; gap: clamp(34px, 7vw, 110px); position: relative; }
 .home-copy { position: relative; z-index: 3; padding-top: 28px; }
-.home-copy::before { content: ""; position: absolute; left: 0; top: 0; width: min(390px, 80%); height: 22px; background: url("/ornament-koshkar-muyiz.png") left center / auto 48px repeat-x; opacity: .85; }
+.home-copy::before { content: ""; position: absolute; left: 0; top: 0; width: 155px; height: 18px; background: url("/ornament-koshkar-muyiz.png") left center / auto 34px no-repeat; opacity: .65; }
 .home-copy h1, .section-heading h1, .result-card h2 { font-family: Georgia, "Times New Roman", serif; }
 .home-copy h1 { margin: 15px 0 22px; max-width: 680px; font-size: clamp(3rem, 6.5vw, 6.5rem); line-height: .94; letter-spacing: -.055em; font-weight: 700; color: #fff1d0; text-shadow: 0 3px 0 #8f271d55; }
 .home-lead { max-width: 590px; color: #a9bcc0; font-size: clamp(1rem, 1.35vw, 1.18rem); line-height: 1.65; }
@@ -149,9 +148,6 @@ button { cursor: pointer; }
 .tutorial-banner span { flex: 0 0 auto; display: grid; place-items: center; width: 33px; height: 33px; border-radius: 50%; background: #b32f26; border: 2px solid #e5b95c; color: #fff0ca; font-weight: 800; font-size: .72rem; }
 .tutorial-banner p { margin: 0; font-size: .82rem; }
 .game-stage-wrap { position: relative; aspect-ratio: 3 / 2; width: 100%; overflow: hidden; border-radius: 8px 24px 8px 24px; border: 2px solid #d9ac51; background: #071822; box-shadow: 0 30px 70px #0005, 0 0 0 5px #9f2b2240; }
-.game-stage-wrap::before, .game-stage-wrap::after { content: ""; position: absolute; left: 0; right: 0; z-index: 5; height: 11px; background: url("/ornament-koshkar-muyiz.png") center / auto 29px repeat-x; opacity: .72; pointer-events: none; }
-.game-stage-wrap::before { top: 0; }
-.game-stage-wrap::after { bottom: 0; transform: rotate(180deg); }
 .game-stage, .game-stage canvas { width: 100% !important; height: 100% !important; display: block; cursor: grab; touch-action: none; }
 .game-stage canvas:active { cursor: grabbing; }
 .stage-hint { margin: 13px 8px 0; text-align: center; color: #8da3a3; font-size: .78rem; }

@@ -69,7 +69,7 @@ const STORAGE_KEY = "alshy.progress.v1";
 const DEFAULT_PROGRESS: PlayerProgress = { bestScore: 0, tutorialCompleted: false, unlockedLevel: 1, results: [] };
 
 const MODES: ModeConfig[] = [
-  { id: "tutorial", eyebrow: "3 шага", title: "Обучение", description: "Освой прицел, силу и первый точный бросок.", targetScore: 1, maxThrows: 4, layout: "cluster", difficulty: "Начало" },
+  { id: "tutorial", eyebrow: "4 шага", title: "Обучение", description: "Освой прицел, силу и первый точный бросок.", targetScore: 1, maxThrows: 4, layout: "cluster", difficulty: "Начало" },
   { id: "classic", eyebrow: "Основной режим", title: "Классический раунд", description: "Выбей 8 из 15 асыков за 10 бросков.", targetScore: 8, maxThrows: 10, layout: "line", difficulty: "Стандарт" },
   { id: "first-hit", eyebrow: "Испытание 1", title: "Первый удар", description: "Выбей 3 асыка за 5 бросков.", targetScore: 3, maxThrows: 5, layout: "cluster", difficulty: "Легко" },
   { id: "streak", eyebrow: "Испытание 2", title: "Серия", description: "Сделай два результативных броска подряд.", targetScore: 2, maxThrows: 7, requiredStreak: 2, layout: "split", difficulty: "Средне" },
@@ -150,6 +150,7 @@ function GameCanvas({
         private launchedAt = 0;
         private dragActive = false;
         private dragDistance = 0;
+        private dragValid = false;
         private shotKnocked = 0;
         private activeKnocked: Array<any & { scored?: boolean }> = [];
         private tutorialStep = 0;
@@ -235,31 +236,35 @@ function GameCanvas({
         private bindInput() {
           this.input.on("pointerdown", (pointer: any) => {
             if (this.phase !== "aiming") return;
-            if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, start.x, start.y) > 105) return;
+            if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, start.x, start.y) > 42) return;
             this.dragActive = true;
             this.dragDistance = 0;
+            this.dragValid = false;
             this.phase = "charging";
             this.emitHud(0);
           });
           this.input.on("pointermove", (pointer: any) => {
             if (!this.dragActive || this.phase !== "charging") return;
-            const dx = start.x - pointer.worldX;
-            const dy = start.y - pointer.worldY;
+            const dx = pointer.worldX - start.x;
+            const dy = pointer.worldY - start.y;
             this.dragDistance = Math.hypot(dx, dy);
-            this.setAim(Phaser.Math.RadToDeg(Math.atan2(dy, dx)), Phaser.Math.Clamp((this.dragDistance / 82) * 100, 18, 100));
+            this.dragValid = dy < -16;
+            this.setAim(Phaser.Math.RadToDeg(Math.atan2(dy, dx)), Phaser.Math.Clamp((this.dragDistance / 175) * 100, 18, 100));
             this.emitTutorial(this.aimPower > 35 ? 2 : 1);
           });
-          this.input.on("pointerup", () => {
+          const release = () => {
             if (!this.dragActive) return;
             this.dragActive = false;
-            if (this.dragDistance < 22) {
+            if (this.dragDistance < 22 || !this.dragValid) {
               this.phase = "aiming";
               this.emitHud(0);
               this.drawAim();
               return;
             }
             this.shoot();
-          });
+          };
+          this.input.on("pointerup", release);
+          this.input.on("pointerupoutside", release);
         }
 
         private setAim(nextAngle: number, nextPower: number) {
@@ -291,6 +296,7 @@ function GameCanvas({
           this.aimGraphics.clear();
           const radians = Phaser.Math.DegToRad(this.aimAngle);
           const speed = 12 + (this.aimPower / 100) * 24;
+          this.saka.setAwake();
           this.saka.setVelocity(Math.cos(radians) * speed, Math.sin(radians) * speed);
           this.saka.setAngularVelocity((this.aimAngle + 90) * 0.0018);
           this.emitHud(0);
@@ -377,7 +383,7 @@ function GameCanvas({
         width: 960,
         height: 640,
         backgroundColor: "#071822",
-        physics: { default: "matter", matter: { gravity: { x: 0, y: 0 }, enableSleeping: true, positionIterations: 10, velocityIterations: 8 } },
+        physics: { default: "matter", matter: { gravity: { x: 0, y: 0 }, enableSleeping: false, positionIterations: 10, velocityIterations: 8 } },
         scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
         scene: AsykScene,
       });
@@ -402,6 +408,7 @@ export default function GameApp() {
   const [screen, setScreen] = useState<Screen>("home");
   const [mode, setMode] = useState<ModeConfig>(MODES[1]);
   const [progress, setProgress] = useState<PlayerProgress>(DEFAULT_PROGRESS);
+  const progressRef = useRef<PlayerProgress>(DEFAULT_PROGRESS);
   const [ready, setReady] = useState(false);
   const [roundKey, setRoundKey] = useState(0);
   const [muted, setMuted] = useState(false);
@@ -409,9 +416,10 @@ export default function GameApp() {
   const [hud, setHud] = useState<HudState>({ score: 0, throwsUsed: 0, maxThrows: 10, targetScore: 8, streak: 0, phase: "aiming", lastKnocked: 0 });
   const [result, setResult] = useState<RoundResult | null>(null);
 
-  useEffect(() => { setProgress(loadProgress()); setReady(true); }, []);
+  useEffect(() => { const saved = loadProgress(); progressRef.current = saved; setProgress(saved); setReady(true); }, []);
 
   const saveProgress = useCallback((next: PlayerProgress) => {
+    progressRef.current = next;
     setProgress(next);
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* keep playing */ }
   }, []);
@@ -426,15 +434,16 @@ export default function GameApp() {
 
   const handleComplete = useCallback((roundResult: RoundResult) => {
     setResult(roundResult);
+    const current = progressRef.current;
     const challengeIndex = ["first-hit", "streak", "marksman"].indexOf(roundResult.mode);
-    const unlockedLevel = roundResult.won && challengeIndex >= 0 ? Math.max(progress.unlockedLevel, Math.min(4, challengeIndex + 2)) : progress.unlockedLevel;
+    const unlockedLevel = roundResult.won && challengeIndex >= 0 ? Math.max(current.unlockedLevel, Math.min(4, challengeIndex + 2)) : current.unlockedLevel;
     saveProgress({
-      bestScore: Math.max(progress.bestScore, roundResult.score),
-      tutorialCompleted: progress.tutorialCompleted || roundResult.mode === "tutorial",
+      bestScore: Math.max(current.bestScore, roundResult.score),
+      tutorialCompleted: current.tutorialCompleted || roundResult.mode === "tutorial",
       unlockedLevel,
-      results: [roundResult, ...progress.results].slice(0, 8),
+      results: [roundResult, ...current.results].slice(0, 8),
     });
-  }, [progress, saveProgress]);
+  }, [saveProgress]);
 
   const nextChallenge = useMemo(() => {
     if (!result?.won) return null;
@@ -490,7 +499,7 @@ export default function GameApp() {
         <section className="rules-screen page-panel">
           <div className="section-heading rules-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("home")}><ArrowLeft /> Назад</Button><p className="eyebrow">Коротко о главном</p><h1>Как играть</h1></div>
           <div className="rules-layout">
-            <article className="rule-lead"><span className="rule-number">01</span><h2>Сақа — твой снаряд</h2><p>Потяни бирюзовый сақа назад, выбери направление и отпусти.</p></article>
+            <article className="rule-lead"><span className="rule-number">01</span><h2>Сақа — твой снаряд</h2><p>Зажми бирюзовый сақа, проведи мышью в сторону цели и отпусти.</p></article>
             <article><span className="rule-number">02</span><h2>Выбивай за круг</h2><p>Асык засчитывается, только когда полностью пересёк светлую границу.</p></article>
             <article><span className="rule-number">03</span><h2>Считай броски</h2><p>В классическом раунде нужно выбить 8 из 15 асыков за 10 попыток.</p></article>
             <article><span className="rule-number">04</span><h2>Улучшай точность</h2><p>Результат зависит от угла, силы и точки первого столкновения.</p></article>
@@ -501,15 +510,15 @@ export default function GameApp() {
 
       {screen === "play" && (
         <section className="play-screen">
-          <div className="play-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("modes")}><ArrowLeft /> Режимы</Button><div><span>{mode.eyebrow}</span><strong>{mode.title}</strong></div><div className="phase-pill">{hud.phase === "simulating" ? "Сақа в движении" : hud.phase === "resolving" ? "Считаем результат" : "Твой бросок"}</div></div>
+          <div className="play-heading"><Button variant="ghost" className="back-button" onClick={() => setScreen("modes")}><ArrowLeft /> Режимы</Button><div><span>{mode.eyebrow}</span><strong>{mode.title}</strong></div><div className="phase-pill">{hud.phase === "simulating" ? "Сақа в движении" : hud.phase === "resolving" ? "Считаем результат" : hud.phase === "completed" ? "Раунд завершён" : "Твой бросок"}</div></div>
           <div className="game-layout">
             <aside className="hud-card score-card"><p className="eyebrow">Результат</p><div className="big-score"><strong>{mode.requiredStreak ? hud.streak : hud.score}</strong><span>/ {mode.requiredStreak ?? hud.targetScore}</span></div><p>{mode.requiredStreak ? "серия точных бросков" : "асыков выбито"}</p><Progress value={Math.min(100, ((mode.requiredStreak ? hud.streak : hud.score) / (mode.requiredStreak ?? hud.targetScore)) * 100)} /><div className="throws-row"><span>Броски</span><strong>{hud.throwsUsed} / {hud.maxThrows}</strong></div><div className="throws-dots">{Array.from({ length: hud.maxThrows }, (_, index) => <i className={index < hud.throwsUsed ? "used" : ""} key={index} />)}</div></aside>
             <div className="stage-column">
-              {mode.id === "tutorial" && <div className="tutorial-banner"><span>{Math.min(tutorialStep + 1, 4)} / 4</span><p>{["Потяни сақа назад, чтобы выбрать направление.", "Меняй угол — линия показывает будущий бросок.", "Добавь силы и отпусти сақа.", "Дождись остановки и посмотри результат.", "Отлично. Теперь выбей один асык за круг."][tutorialStep]}</p></div>}
+              {mode.id === "tutorial" && <div className="tutorial-banner"><span>{Math.min(tutorialStep + 1, 4)} / 4</span><p>{["Проведи сақа мышью к асыкам, затем отпусти.", "Меняй угол — линия показывает будущий бросок.", "Чем длиннее жест, тем сильнее удар. Отпусти сақа.", "Дождись остановки и посмотри результат.", "Отлично. Теперь выбей один асык за круг."][tutorialStep]}</p></div>}
               <GameCanvas mode={mode} roundKey={roundKey} onHud={setHud} onComplete={handleComplete} onTutorialStep={setTutorialStep} />
-              <p className="stage-hint">Зажми сақа, потяни назад и отпусти. Длина жеста задаёт силу, направление — угол броска.</p>
+              <p className="stage-hint">Зажми сақа, проведи мышью к цели и отпусти. Длина жеста задаёт силу.</p>
             </div>
-            <aside className="hud-card gesture-card"><p className="eyebrow">Бросок рукой</p><div className="gesture-mark"><span className="mini-saka" /><i /></div><h3>Потяни и отпусти</h3><p>Чем дальше оттянешь сақа, тем сильнее удар. Направление жеста задаёт траекторию.</p><div className="control-note"><Crosshair /><p>Целься не только в центр: касательный удар сильнее разбрасывает крайние асыки.</p></div></aside>
+            <aside className="hud-card gesture-card"><p className="eyebrow">Бросок мышью</p><div className="gesture-mark"><span className="mini-saka" /><i /></div><h3>Наведи и отпусти</h3><p>Веди сақа к цели. Чем длиннее жест, тем сильнее удар.</p><div className="control-note"><Crosshair /><p>Целься не только в центр: касательный удар сильнее разбрасывает крайние асыки.</p></div></aside>
           </div>
           {result && <div className="result-backdrop" role="dialog" aria-modal="true" aria-labelledby="result-title"><article className="result-card"><div className={`result-icon ${result.won ? "won" : ""}`}>{result.won ? <Trophy /> : <Target />}</div><p className="eyebrow">Раунд завершён</p><h2 id="result-title">{result.won ? "Жеңіс! Победа" : "Ещё один точный бросок"}</h2><p className="result-copy">{advice(result)}</p><div className="result-stats"><span><strong>{result.score}</strong><small>выбито</small></span><span><strong>{result.accuracy}%</strong><small>точность</small></span><span><strong>{result.bestShot}</strong><small>лучший бросок</small></span></div><div className="result-actions">{nextChallenge && <Button className="primary-action" onClick={() => startMode(nextChallenge)}>Следующее испытание</Button>}<Button variant={nextChallenge ? "outline" : "default"} onClick={() => startMode(mode)}><RotateCcw /> Сыграть ещё</Button><Button variant="ghost" onClick={() => setScreen("modes")}>К режимам</Button></div></article></div>}
         </section>
