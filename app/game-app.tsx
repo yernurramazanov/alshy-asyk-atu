@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -9,7 +10,6 @@ import {
   Crosshair,
   History,
   LockKeyhole,
-  Medal,
   RotateCcw,
   ShoppingBag,
   Sparkles,
@@ -20,7 +20,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { DEFAULT_PROGRESS, normalizeProgress, SKINS, starsForRound, type ModeId, type PlayerProgress, type RoundResult, type SkinConfig, type SkinId } from "@/lib/game-progress";
+import { awardRound, DEFAULT_PROGRESS, normalizeProgress, SKINS, starsForRound, type ModeId, type PlayerProgress, type RoundResult, type SkinConfig, type SkinId } from "@/lib/game-progress";
 import { languageFromBrowser, languageNames, translation, type Language, type ThemeChoice } from "@/lib/i18n";
 
 type Screen = "home" | "modes" | "play" | "rules" | "shop";
@@ -55,21 +55,12 @@ const MODES: ModeConfig[] = [
   { id: "marksman", targetScore: 8, maxThrows: 6, layout: "line" },
 ];
 
-function loadLegacyProgress(): PlayerProgress | null {
-  if (typeof window === "undefined") return null;
+function loadSavedProgress(): PlayerProgress {
+  if (typeof window === "undefined") return normalizeProgress(null);
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? normalizeProgress(JSON.parse(raw)) : null;
-  } catch { return null; }
-}
-
-async function progressRequest(action?: Record<string, unknown>) {
-  const response = await fetch("/api/progress", action ? {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(action),
-  } : { cache: "no-store" });
-  const data = await response.json() as { progress?: PlayerProgress; exists?: boolean; earnedCoins?: number; earnedStars?: number; error?: string };
-  if (!response.ok || !data.progress) throw new Error(data.error ?? "Прогресс временно недоступен.");
-  return data;
+    return raw ? normalizeProgress(JSON.parse(raw)) : normalizeProgress(null);
+  } catch { return normalizeProgress(null); }
 }
 
 function modeById(id: ModeId) {
@@ -116,9 +107,9 @@ function GameCanvas({
     let cancelled = false;
 
     async function boot() {
-      const module = await import("phaser");
+      const phaserModule = await import("phaser");
       if (cancelled || !hostRef.current) return;
-      const Phaser = module.default;
+      const Phaser = phaserModule.default;
       const arena = { x: 480, y: 300, radius: 224 };
       const start = { x: 480, y: 572 };
 
@@ -301,18 +292,6 @@ function GameCanvas({
 
         update(time: number) {
           if (this.phase !== "simulating") return;
-          const newlyKnocked = this.asyks.filter((asyk) => !asyk.scored && Phaser.Math.Distance.Between(asyk.x, asyk.y, arena.x, arena.y) - 14 > arena.radius + 2);
-          if (newlyKnocked.length) {
-            newlyKnocked.forEach((asyk) => {
-              asyk.scored = true;
-              asyk.setTint(0x25d9c7);
-              asyk.setFrictionAir(0.07);
-              this.activeKnocked.push(asyk);
-            });
-            this.shotKnocked += newlyKnocked.length;
-            this.score += newlyKnocked.length;
-            this.emitHud(this.shotKnocked);
-          }
           const allSlow = [this.saka, ...this.asyks.filter((asyk) => !asyk.scored)].every((body) => {
             const velocity = body.body?.velocity ?? { x: 0, y: 0 };
             return Math.hypot(velocity.x, velocity.y) < 0.16 && Math.abs(body.body?.angularVelocity ?? 0) < 0.025;
@@ -327,7 +306,11 @@ function GameCanvas({
         private resolveShot() {
           if (this.phase !== "simulating") return;
           this.phase = "resolving";
-          const knocked = this.activeKnocked;
+          const knocked = this.asyks.filter((asyk) => !asyk.scored && Phaser.Math.Distance.Between(asyk.x, asyk.y, arena.x, arena.y) - 14 > arena.radius + 2);
+          knocked.forEach((asyk) => { asyk.scored = true; asyk.setTint(0x25d9c7); });
+          this.activeKnocked = knocked;
+          this.shotKnocked = knocked.length;
+          this.score += knocked.length;
           knocked.forEach((asyk) => asyk.setStatic(true));
           const count = this.shotKnocked;
           this.bestShot = Math.max(this.bestShot, count);
@@ -435,22 +418,14 @@ export default function GameApp() {
   const chooseTheme = (next: ThemeChoice) => { window.localStorage.setItem("alshy.theme", next); setTheme(next); };
 
   useEffect(() => {
-    let active = true;
-    async function load() {
-      try {
-        let data = await progressRequest();
-        const legacy = loadLegacyProgress();
-        if (!data.exists && legacy) data = await progressRequest({ action: "import", legacy });
-        if (active) { progressRef.current = data.progress!; setProgress(data.progress!); }
-      } catch (error) {
-        if (active) setProgressError(error instanceof Error ? error.message : "Прогресс временно недоступен.");
-      } finally { if (active) setReady(true); }
-    }
-    void load();
-    return () => { active = false; };
+    const saved = loadSavedProgress();
+    progressRef.current = saved;
+    setProgress(saved);
+    setReady(true);
   }, []);
 
   const saveProgress = useCallback((next: PlayerProgress) => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     progressRef.current = next;
     setProgress(next);
     setProgressError(null);
@@ -467,19 +442,23 @@ export default function GameApp() {
   const handleComplete = useCallback((roundResult: RoundResult) => {
     setResult(roundResult);
     setReward(null);
-    void progressRequest({ action: "round", result: roundResult }).then((data) => {
-      saveProgress(data.progress!);
-      setReward({ earnedCoins: data.earnedCoins ?? 0, earnedStars: data.earnedStars ?? 0 });
-    }).catch((error) => setProgressError(error instanceof Error ? error.message : "Не удалось сохранить результат."));
+    try {
+      const data = awardRound(progressRef.current, roundResult);
+      saveProgress(data.progress);
+      setReward({ earnedCoins: data.earnedCoins, earnedStars: data.earnedStars });
+    } catch (error) { setProgressError(error instanceof Error ? error.message : "Не удалось сохранить результат."); }
   }, [saveProgress]);
 
   const handleSkin = useCallback((skin: SkinConfig) => {
     if (pendingSkin) return;
     setPendingSkin(skin.id);
-    const action = progressRef.current.ownedSkins.includes(skin.id) ? "equip" : "purchase";
-    void progressRequest({ action, skinId: skin.id }).then((data) => saveProgress(data.progress!))
-      .catch((error) => setProgressError(error instanceof Error ? error.message : "Не удалось обновить лавку."))
-      .finally(() => setPendingSkin(null));
+    try {
+      const current = progressRef.current;
+      if (!current.ownedSkins.includes(skin.id) && current.coins < skin.price) throw new Error("Недостаточно монет.");
+      const ownedSkins = current.ownedSkins.includes(skin.id) ? current.ownedSkins : [...current.ownedSkins, skin.id];
+      saveProgress({ ...current, coins: current.coins - (ownedSkins === current.ownedSkins ? 0 : skin.price), ownedSkins, equippedSkin: skin.id });
+    } catch (error) { setProgressError(error instanceof Error ? error.message : "Не удалось обновить лавку."); }
+    finally { setPendingSkin(null); }
   }, [pendingSkin, saveProgress]);
 
   const nextChallenge = useMemo(() => {
